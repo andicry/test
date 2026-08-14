@@ -1,0 +1,2915 @@
+-- not done 
+local UIConfig = {
+	name   = (getgenv and getgenv().symbol_name)   or "symbol",
+	name2  = (getgenv and getgenv().symbol_name2)  or "",     -- secondary part, drawn in the ACCENT color (e.g. ".cc")
+	-- icon: lucide name ("dna"), asset id (123456 / "rbxassetid://..."),
+	-- or a direct URL (downloaded + loaded via getcustomasset)
+	icon   = (getgenv and getgenv().symbol_icon)   or "https://files.catbox.moe/8v20vp.png",
+	folder = (getgenv and getgenv().symbol_folder) or "Avenir.CC",
+}
+
+local Players          = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local RunService       = game:GetService("RunService")
+local HttpService      = game:GetService("HttpService")
+local TweenService     = game:GetService("TweenService")
+local player           = Players.LocalPlayer
+
+-- fully unload a previous instance of this UI before building a new one
+if getgenv and getgenv().symbol_unload then
+	pcall(getgenv().symbol_unload)
+	getgenv().symbol_unload = nil
+end
+
+--========================================================================
+-- Fonts (downloadable, switchable in Settings — Verdana default)
+--========================================================================
+local baseFolder = UIConfig.folder
+local fontsFolder = baseFolder .. '/Fonts'
+pcall(function()
+	if not isfolder(baseFolder) then makefolder(baseFolder) end
+	if not isfolder(fontsFolder) then makefolder(fontsFolder) end
+end)
+
+local FontList = {
+	"ProggyClean", "ProggyTiny", "Verdana-Font", "Tahoma-Modern",
+	"Tahoma-Modern-Bold", "tahoma_bold", "fs-tahoma-8px", "open-sans-px",
+	"smallest_pixel-7", "Minecraftia-Regular", "Rubik-Regular",
+	"Comfortaa-Regular", "HankenGrotesk-SemiBold", "Inter_28pt-Medium",
+	"Inter_28pt-SemiBold", "Light Modern",
+}
+local FONT_URL = "https://github.com/i77lhm/storage/raw/refs/heads/main/fonts/%s.ttf"
+local FontCache = {}
+
+local function loadFont(name)
+	if FontCache[name] then return FontCache[name] end
+	local font
+	pcall(function()
+		local ttfPath = fontsFolder .. '/' .. name .. '.ttf'
+		if not isfile(ttfPath) then
+			local data = game:HttpGet(FONT_URL:format(name:gsub(" ", "%%20")))
+			if type(data) == 'string' and #data > 100 then writefile(ttfPath, data) end
+		end
+		if isfile(ttfPath) then
+			local fontFile = fontsFolder .. '/' .. name .. '.font'
+			if isfile(fontFile) then delfile(fontFile) end
+			writefile(fontFile, HttpService:JSONEncode({
+				name = "symbol_" .. name,
+				faces = {{ name = "Normal", weight = 400, style = "Normal", assetId = getcustomasset(ttfPath) }},
+			}))
+			font = Font.new(getcustomasset(fontFile), Enum.FontWeight.Regular, Enum.FontStyle.Normal)
+		end
+	end)
+	FontCache[name] = font
+	return font
+end
+
+-- VERDANA/VERDANA_BOLD hold whatever the CURRENT font is (name kept for brevity)
+local VERDANA = loadFont("Verdana-Font") or Font.fromEnum(Enum.Font.SourceSansSemibold)
+local VERDANA_BOLD
+do
+	local ok, f = pcall(function() return Font.new(VERDANA.Family, Enum.FontWeight.Bold, Enum.FontStyle.Normal) end)
+	VERDANA_BOLD = ok and f or VERDANA
+end
+
+local setFontTargets -- filled in after gui exists
+local function applyFont(name)
+	local f = loadFont(name)
+	if not f then return false end
+	VERDANA = f
+	local ok, b = pcall(function() return Font.new(f.Family, Enum.FontWeight.Bold, Enum.FontStyle.Normal) end)
+	VERDANA_BOLD = ok and b or f
+	for _, root in ipairs(setFontTargets or {}) do
+		for _, o in ipairs(root:GetDescendants()) do
+			if o:IsA("TextLabel") or o:IsA("TextButton") or o:IsA("TextBox") then
+				local w = o.FontFace.Weight
+				o.FontFace = (w == Enum.FontWeight.Bold) and VERDANA_BOLD or VERDANA
+			end
+		end
+	end
+	return true
+end
+
+--========================================================================
+-- Icons
+--========================================================================
+local icons = {}
+pcall(function()
+	icons = loadstring(game:HttpGet('https://raw.githubusercontent.com/Footagesus/Icons/main/lucide/dist/Icons.lua'))()
+end)
+local function getIcon(name)
+	local ok, r = pcall(function()
+		if icons.Icon then return icons.Icon(name) end
+		return icons[name]
+	end)
+	if ok and r then
+		if type(r) == "table" then
+			return r[1] or r.Image, r[2] or r.ImageRectSize, r[3] or r.ImageRectOffset
+		end
+		return r
+	end
+end
+
+-- resolve an image source: URL (downloaded via getcustomasset), asset id
+-- (number or rbxassetid://...), rbx* content string — or nil (lucide name)
+local assetsFolder = baseFolder .. '/Assets'
+pcall(function() if not isfolder(assetsFolder) then makefolder(assetsFolder) end end)
+local function resolveImage(src)
+	if type(src) == "number" then return "rbxassetid://" .. src end
+	if type(src) ~= "string" then return nil end
+	if src:match("^rbx") then return src end                    -- rbxassetid:// / rbxthumb://
+	if src:match("^%d+$") then return "rbxassetid://" .. src end
+	if src:match("^https?://") then
+		local img
+		pcall(function()
+			local fname = assetsFolder .. '/' .. src:gsub("[^%w]", ""):sub(-40) .. ".png"
+			if not isfile(fname) then
+				local data = game:HttpGet(src)
+				if type(data) == "string" and #data > 100 then writefile(fname, data) end
+			end
+			if isfile(fname) then img = getcustomasset(fname) end
+		end)
+		return img
+	end
+	return nil -- treat as a lucide icon name
+end
+
+--========================================================================
+-- Theme (photo-matched: dusty pink accent on near-black greys)
+--========================================================================
+local T = {
+	bg      = Color3.fromRGB(24, 24, 24),   -- window
+	side    = Color3.fromRGB(20, 20, 20),   -- sidebar column
+	strip   = Color3.fromRGB(21, 21, 21),   -- title / hud
+	section = Color3.fromRGB(28, 28, 28),   -- section panels
+	inset   = Color3.fromRGB(17, 17, 17),   -- listboxes / tracks
+	element = Color3.fromRGB(36, 36, 36),   -- buttons / boxes
+	line    = Color3.fromRGB(44, 44, 44),
+	line2   = Color3.fromRGB(60, 60, 60),
+	text    = Color3.fromRGB(235, 235, 235),
+	dim     = Color3.fromRGB(140, 140, 140),
+	dim2    = Color3.fromRGB(90, 90, 90),
+	accent  = Color3.fromRGB(216, 110, 122), -- dusty pink (title underline, fills)
+	accent2 = Color3.fromRGB(226, 80, 88),   -- hotter red-pink (selected list text)
+}
+local AccentUsers = {} -- callbacks refreshed when accent changes
+
+--========================================================================
+-- Helpers
+--========================================================================
+local function round(o, r) local c = Instance.new("UICorner") c.CornerRadius = UDim.new(0, r or 4) c.Parent = o return c end
+local function stroke(o, col, th) local s = Instance.new("UIStroke") s.Color = col or T.line s.Thickness = th or 1 s.Parent = o return s end
+local function pad(o, l, t, r, b)
+	local p = Instance.new("UIPadding")
+	p.PaddingLeft, p.PaddingTop = UDim.new(0, l or 0), UDim.new(0, t or 0)
+	p.PaddingRight, p.PaddingBottom = UDim.new(0, r or l or 0), UDim.new(0, b or t or 0)
+	p.Parent = o
+	return p
+end
+local function txt(parent, text, size, color, bold)
+	local l = Instance.new("TextLabel")
+	l.BackgroundTransparency = 1
+	l.Text = text
+	l.TextSize = size or 14
+	l.FontFace = bold and VERDANA_BOLD or VERDANA
+	l.TextColor3 = color or T.text
+	l.TextXAlignment = Enum.TextXAlignment.Left
+	l.ZIndex = parent.ZIndex or 1
+	l.Parent = parent
+	return l
+end
+local function hline(parent, y, col, z)
+	local f = Instance.new("Frame")
+	f.Size = UDim2.new(1, 0, 0, 1)
+	f.Position = UDim2.fromOffset(0, y)
+	f.BackgroundColor3 = col or T.line
+	f.BorderSizePixel = 0
+	f.ZIndex = z or (parent.ZIndex or 1)
+	f.Parent = parent
+	return f
+end
+local function icon(parent, name, size, color)
+	local img, rs, ro = getIcon(name)
+	local i = Instance.new("ImageLabel")
+	i.BackgroundTransparency = 1
+	i.Size = UDim2.fromOffset(size, size)
+	i.Image = img or ""
+	if rs then i.ImageRectSize = rs end
+	if ro then i.ImageRectOffset = ro end
+	i.ImageColor3 = color or T.dim
+	i.ZIndex = parent.ZIndex or 1
+	i.Parent = parent
+	return i
+end
+local function fmtNum(v)
+	local s = string.format("%.3f", v)
+	s = s:gsub("0+$", ""):gsub("%.$", "")
+	return s
+end
+
+-- Aurora-style element: dark outline, subtle top-light gradient, accent hover
+local function styleElement(o, hover)
+	o.BackgroundColor3 = T.element
+	o.BorderSizePixel = 0
+	round(o, 3)
+	local st = Instance.new("UIStroke")
+	st.Color = Color3.fromRGB(4, 4, 4)
+	st.Thickness = 1
+	st.Parent = o
+	local g = Instance.new("UIGradient")
+	g.Color = ColorSequence.new(Color3.fromRGB(255, 255, 255), Color3.fromRGB(178, 178, 178))
+	g.Rotation = 90
+	g.Parent = o
+	return st
+end
+
+local gui = Instance.new("ScreenGui")
+gui.Name = "symbol"
+gui.ResetOnSpawn = false
+gui.IgnoreGuiInset = true
+gui.DisplayOrder = 999999999            -- always on top of other guis
+pcall(function() gui.OnTopOfCoreBlur = true end) -- stays above the Roblox menu blur
+local ok = pcall(function() gui.Parent = gethui() end) -- topmost container
+if not ok or not gui.Parent then gui.Parent = player:WaitForChild("PlayerGui") end
+setFontTargets = { gui }
+local UnloadTargets = { gui } -- everything destroyed on unload/re-execute
+local function unloadAll()
+	for _, o in ipairs(UnloadTargets) do pcall(function() o:Destroy() end) end
+	if getgenv then getgenv().symbol_unload = nil end
+end
+if getgenv then getgenv().symbol_unload = unloadAll end
+
+-- popup layer
+local popupLayer = Instance.new("Frame")
+popupLayer.Size = UDim2.fromScale(1, 1)
+popupLayer.BackgroundTransparency = 1
+popupLayer.ZIndex = 90
+popupLayer.Parent = gui
+
+-- Popup STACK: dropdowns opened from inside a gear popup spawn a level-2
+-- popup instead of nuking the gear popup. Clicking outside everything (or
+-- inside a lower level) closes the levels above it.
+local popupStack = {} -- { {frame=..., level=..., anchor=...}, ... }
+
+local function closePopupsFrom(level)
+	for i = #popupStack, 1, -1 do
+		local e = popupStack[i]
+		if e.level >= level then
+			e.frame:Destroy()
+			table.remove(popupStack, i)
+		end
+	end
+end
+local function closePopup() closePopupsFrom(1) end
+local function anyPopupOpen() return #popupStack > 0 end
+
+-- level for a popup spawned FROM this gui object (nested if it's in a popup)
+local function popupLevelFor(obj)
+	for _, e in ipairs(popupStack) do
+		if obj:IsDescendantOf(e.frame) then return e.level + 1 end
+	end
+	return 1
+end
+-- if this anchor already owns an open popup, close it and report true
+local function togglePopupFor(anchor)
+	for i, e in ipairs(popupStack) do
+		if e.anchor == anchor then closePopupsFrom(e.level) return true end
+	end
+	return false
+end
+
+UserInputService.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 and #popupStack > 0 then
+		-- compare in the layer's raw-screen space (AbsolutePosition is
+		-- inset-adjusted; the layer ignores the inset)
+		local m = UserInputService:GetMouseLocation()
+		local insideLevel
+		for _, e in ipairs(popupStack) do
+			local p = e.frame.AbsolutePosition - popupLayer.AbsolutePosition
+			local s = e.frame.AbsoluteSize
+			if m.X >= p.X and m.X <= p.X + s.X and m.Y >= p.Y and m.Y <= p.Y + s.Y then
+				insideLevel = math.max(insideLevel or 0, e.level)
+			end
+			-- clicking a popup's own anchor (the dropdown box / gear / swatch)
+			-- must NOT close it here — the anchor's click handler toggles it,
+			-- and closing first made every re-click reopen instead of close
+			if e.anchor and e.anchor.Parent then
+				local ap = e.anchor.AbsolutePosition - popupLayer.AbsolutePosition
+				local as = e.anchor.AbsoluteSize
+				if m.X >= ap.X and m.X <= ap.X + as.X and m.Y >= ap.Y and m.Y <= ap.Y + as.Y then
+					return
+				end
+			end
+		end
+		if not insideLevel then
+			task.defer(closePopup)
+		else
+			task.defer(function()
+				-- keep the popup the click landed in (and its parents); a
+				-- click there that spawns a child popup happens after this
+				for i = #popupStack, 1, -1 do
+					local e = popupStack[i]
+					if e.level > insideLevel + 1 then
+						e.frame:Destroy()
+						table.remove(popupStack, i)
+					end
+				end
+			end)
+		end
+	end
+end)
+
+local function newPopup(w, level, anchor)
+	level = level or 1
+	closePopupsFrom(level)
+	local pop = Instance.new("Frame")
+	pop.Size = UDim2.fromOffset(w, 10)
+	pop.AutomaticSize = Enum.AutomaticSize.Y
+	pop.BackgroundColor3 = T.element
+	pop.BorderSizePixel = 0
+	-- big z step per level so a nested list always covers the parent popup's
+	-- own elements (which sit a few z above their popup frame)
+	pop.ZIndex = 90 + level * 10
+	pop.Parent = popupLayer
+	round(pop, 3)
+	local st = Instance.new("UIStroke")
+	st.Color = Color3.fromRGB(4, 4, 4)
+	st.Thickness = 1
+	st.Parent = pop
+	local g = Instance.new("UIGradient") -- same texture as the elements
+	g.Color = ColorSequence.new(Color3.fromRGB(255, 255, 255), Color3.fromRGB(178, 178, 178))
+	g.Rotation = 90
+	g.Parent = pop
+	pad(pop, 8, 6, 8, 8)
+	local list = Instance.new("UIListLayout")
+	list.SortOrder = Enum.SortOrder.LayoutOrder
+	list.Padding = UDim.new(0, 5)
+	list.Parent = pop
+	table.insert(popupStack, { frame = pop, level = level, anchor = anchor })
+	return pop
+end
+local function popupAtMouse(w, level, anchor)
+	local pop = newPopup(w, level, anchor)
+	local m = UserInputService:GetMouseLocation()
+	pop.Position = UDim2.fromOffset(m.X, m.Y)
+	return pop
+end
+local function popupBelow(anchor, w, level)
+	local pop = newPopup(w or anchor.AbsoluteSize.X, level, anchor)
+	-- convert into the layer's space. No gap — the list connects to the box.
+	local p = anchor.AbsolutePosition - popupLayer.AbsolutePosition
+	pop.Position = UDim2.fromOffset(p.X, p.Y + anchor.AbsoluteSize.Y)
+	return pop
+end
+
+-- Tooltip: small label following the mouse while hovering an element
+local tooltipFrame
+local function attachTooltip(obj, text)
+	if not text then return end
+	local hovering = false
+	obj.MouseEnter:Connect(function()
+		hovering = true
+		if tooltipFrame then tooltipFrame:Destroy() end
+		local f = Instance.new("Frame")
+		f.AutomaticSize = Enum.AutomaticSize.XY
+		f.BackgroundColor3 = T.element
+		f.BorderSizePixel = 0
+		f.ZIndex = 120
+		f.Parent = popupLayer
+		round(f, 3)
+		stroke(f, Color3.fromRGB(4, 4, 4))
+		local l = txt(f, text, 12, T.text)
+		l.AutomaticSize = Enum.AutomaticSize.XY
+		l.ZIndex = 120
+		pad(f, 6, 3)
+		tooltipFrame = f
+		task.spawn(function()
+			while hovering and f.Parent do
+				local m = UserInputService:GetMouseLocation()
+				f.Position = UDim2.fromOffset(m.X + 14, m.Y + 10)
+				task.wait()
+			end
+		end)
+	end)
+	obj.MouseLeave:Connect(function()
+		hovering = false
+		if tooltipFrame then tooltipFrame:Destroy() tooltipFrame = nil end
+	end)
+end
+
+--========================================================================
+-- Flags / config
+--========================================================================
+local Flags, FlagSetters, Keybinds = {}, {}, {}
+local AnimColorFlags = {} -- color flags that the Animations engine drives
+local Searchables = {}    -- { {label=..., holder=...} } for the search bar
+
+local configFolder = baseFolder .. '/Configs'
+pcall(function() if not isfolder(configFolder) then makefolder(configFolder) end end)
+
+local function saveConfig(name)
+	local out = {}
+	for k, v in pairs(Flags) do
+		-- pure dict — a mixed {__c3=true, r,g,b} array doesn't survive JSON
+		if typeof(v) == "Color3" then out[k] = { __c3 = true, r = v.R, g = v.G, b = v.B }
+		else out[k] = v end
+	end
+	writefile(configFolder .. '/' .. name .. '.json', HttpService:JSONEncode(out))
+end
+local function loadConfig(name)
+	local path = configFolder .. '/' .. name .. '.json'
+	if not isfile(path) then return end
+	local ok, data = pcall(function() return HttpService:JSONDecode(readfile(path)) end)
+	if not ok then return end
+	for k, v in pairs(data) do
+		if type(v) == "table" and v.__c3 then v = Color3.new(v.r or v[1] or 0, v.g or v[2] or 0, v.b or v[3] or 0) end
+		Flags[k] = v
+		if FlagSetters[k] then pcall(FlagSetters[k], v) end
+	end
+end
+local function listConfigs()
+	local out = {}
+	pcall(function()
+		for _, f in ipairs(listfiles(configFolder)) do
+			local n = f:match("([^/\\]+)%.json$")
+			if n then table.insert(out, n) end
+		end
+	end)
+	return out
+end
+
+--========================================================================
+-- Window
+--========================================================================
+-- CanvasGroup so the whole menu can fade in/out as one (open/close animation)
+local main = Instance.new("CanvasGroup")
+main.Name = "Main"
+main.Size = UDim2.fromOffset(880, 620)
+main.Position = UDim2.new(0.5, -440, 0.5, -310)
+main.BackgroundColor3 = T.bg
+main.BorderSizePixel = 0
+main.Active = true
+main.Parent = gui
+round(main, 6)
+stroke(main, T.line)
+
+do -- drag by title strip
+	local dragging, dragStart, startPos
+	main.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 then
+			if input.Position.Y - main.AbsolutePosition.Y <= 46 then
+				dragging, dragStart, startPos = true, input.Position, main.Position
+				input.Changed:Connect(function()
+					if input.UserInputState == Enum.UserInputState.End then dragging = false end
+				end)
+			end
+		end
+	end)
+	UserInputService.InputChanged:Connect(function(input)
+		if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+			local d = input.Position - dragStart
+			main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X, startPos.Y.Scale, startPos.Y.Offset + d.Y)
+		end
+	end)
+end
+
+-- Title strip: logo + "symbol", search right, ACCENT line underneath
+local TITLE_H, TAB_H, SIDE_W = 46, 62, 128
+
+local titleBar = Instance.new("Frame")
+titleBar.Size = UDim2.new(1, 0, 0, TITLE_H)
+titleBar.BackgroundTransparency = 1
+titleBar.Parent = main
+-- full-window 2px accent line under the title strip (parented to main so
+-- nothing can shorten it)
+local titleLine = Instance.new("Frame")
+titleLine.Size = UDim2.new(1, 0, 0, 2)
+titleLine.Position = UDim2.fromOffset(0, TITLE_H)
+titleLine.BackgroundColor3 = T.accent
+titleLine.BorderSizePixel = 0
+titleLine.ZIndex = 5
+titleLine.Parent = main
+table.insert(AccentUsers, function() titleLine.BackgroundColor3 = T.accent end)
+
+-- logo: URL / asset id / lucide name all work
+local logoImage = resolveImage(UIConfig.icon)
+local logo
+if logoImage then
+	logo = Instance.new("ImageLabel")
+	logo.BackgroundTransparency = 1
+	logo.Size = UDim2.fromOffset(20, 20)
+	logo.Image = logoImage
+	logo.Parent = titleBar
+else
+	logo = icon(titleBar, UIConfig.icon, 20, T.text)
+	if logo.Image == "" then
+		logo:Destroy()
+		logo = icon(titleBar, "aperture", 20, T.text)
+	end
+end
+logo.Position = UDim2.fromOffset(16, 13)
+
+-- brand text: primary name normal, secondary name in the LIVE accent color
+local function accentHex()
+	return ("#%02X%02X%02X"):format(T.accent.R * 255 + 0.5, T.accent.G * 255 + 0.5, T.accent.B * 255 + 0.5)
+end
+local function brandRich()
+	if UIConfig.name2 ~= "" then
+		return UIConfig.name .. '<font color="' .. accentHex() .. '">' .. UIConfig.name2 .. '</font>'
+	end
+	return UIConfig.name
+end
+local titleText = txt(titleBar, "", 19, T.dim)
+titleText.RichText = true
+titleText.Text = brandRich()
+titleText.TextColor3 = Color3.fromRGB(200, 200, 200)
+titleText.Size = UDim2.fromOffset(200, 24)
+titleText.Position = UDim2.fromOffset(46, 11)
+table.insert(AccentUsers, function() titleText.Text = brandRich() end)
+
+local searchHolder = Instance.new("Frame")
+searchHolder.Size = UDim2.fromOffset(180, 25)
+searchHolder.Position = UDim2.new(1, -196, 0, 10)
+searchHolder.BackgroundColor3 = T.inset
+searchHolder.Parent = titleBar
+round(searchHolder, 4)
+stroke(searchHolder)
+local sIcon = icon(searchHolder, "search", 14, T.dim)
+sIcon.Position = UDim2.fromOffset(9, 6)
+local searchBox = Instance.new("TextBox")
+searchBox.Size = UDim2.new(1, -32, 1, 0)
+searchBox.Position = UDim2.fromOffset(27, 0)
+searchBox.BackgroundTransparency = 1
+searchBox.PlaceholderText = "Search..."
+searchBox.PlaceholderColor3 = T.dim
+searchBox.Text = ""
+searchBox.TextSize = 14
+searchBox.FontFace = VERDANA
+searchBox.TextColor3 = T.text
+searchBox.TextXAlignment = Enum.TextXAlignment.Left
+searchBox.ClearTextOnFocus = false
+searchBox.Parent = searchHolder
+
+-- Sidebar column (full height between title and tab strip)
+local sidebar = Instance.new("Frame")
+sidebar.Size = UDim2.new(0, SIDE_W, 1, -(TITLE_H + 1 + TAB_H + 1))
+sidebar.Position = UDim2.fromOffset(0, TITLE_H + 1)
+sidebar.BackgroundColor3 = T.side
+sidebar.BorderSizePixel = 0
+sidebar.Parent = main
+-- divider lives on main (a child of sidebar would get caught by its UIListLayout)
+local sideEdge = Instance.new("Frame")
+sideEdge.Size = UDim2.new(0, 1, 1, -(TITLE_H + 1 + TAB_H + 1))
+sideEdge.Position = UDim2.fromOffset(SIDE_W, TITLE_H + 1)
+sideEdge.BackgroundColor3 = T.line
+sideEdge.BorderSizePixel = 0
+sideEdge.Parent = main
+
+-- Page area
+local pageHolder = Instance.new("Frame")
+pageHolder.Size = UDim2.new(1, -(SIDE_W + 1), 1, -(TITLE_H + 1 + TAB_H + 1))
+pageHolder.Position = UDim2.fromOffset(SIDE_W + 1, TITLE_H + 1)
+pageHolder.BackgroundTransparency = 1
+pageHolder.Parent = main
+
+-- Tab strip with ACCENT top line
+local tabBar = Instance.new("Frame")
+tabBar.Size = UDim2.new(1, 0, 0, TAB_H)
+tabBar.Position = UDim2.new(0, 0, 1, -TAB_H)
+tabBar.BackgroundTransparency = 1
+tabBar.Parent = main
+local tabLine = hline(tabBar, 0, T.accent)
+table.insert(AccentUsers, function() tabLine.BackgroundColor3 = T.accent end)
+
+local tabHolder = Instance.new("Frame")
+tabHolder.Size = UDim2.fromScale(1, 1)
+tabHolder.BackgroundTransparency = 1
+tabHolder.Parent = tabBar
+local tabLayout = Instance.new("UIListLayout")
+tabLayout.SortOrder = Enum.SortOrder.LayoutOrder
+tabLayout.FillDirection = Enum.FillDirection.Horizontal
+tabLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+tabLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+tabLayout.Padding = UDim.new(0, 14)
+tabLayout.Parent = tabHolder
+
+--========================================================================
+-- Components
+--========================================================================
+
+-- Slider: "label  <value box>" then rounded pill track with textured accent
+-- fill + rounded knob. Click the value to type it.
+local function buildSlider(parent, opts)
+	local flag, min, max = opts.flag, opts.min or 0, opts.max or 1
+	local step = opts.step or 0.1
+	Flags[flag] = opts.default or min
+
+	local holder = Instance.new("Frame")
+	holder.Size = UDim2.new(1, 0, 0, 30)
+	holder.BackgroundTransparency = 1
+	holder.ZIndex = (parent.ZIndex or 1) + 1
+	holder.Parent = parent
+
+	local lbl = txt(holder, opts.text, 14, T.dim)
+	lbl.Size = UDim2.new(0.55, 0, 0, 15)
+
+	-- typeable value (looks like plain text until you click into it)
+	local valBox = Instance.new("TextBox")
+	valBox.Size = UDim2.new(0.45, 0, 0, 15)
+	valBox.Position = UDim2.fromScale(0.55, 0)
+	valBox.BackgroundTransparency = 1
+	valBox.Text = ""
+	valBox.TextSize = 14
+	valBox.FontFace = VERDANA
+	valBox.TextColor3 = T.text
+	valBox.TextXAlignment = Enum.TextXAlignment.Left
+	valBox.ClearTextOnFocus = false
+	valBox.ZIndex = holder.ZIndex
+	valBox.Parent = holder
+
+	local track = Instance.new("Frame")
+	track.Size = UDim2.new(1, 0, 0, 8)
+	track.Position = UDim2.fromOffset(0, 19)
+	track.BackgroundColor3 = T.inset
+	track.BorderSizePixel = 0
+	track.ClipsDescendants = true
+	track.ZIndex = holder.ZIndex
+	track.Parent = holder
+	round(track, 4)
+	stroke(track, Color3.fromRGB(4, 4, 4))
+
+	local fill = Instance.new("Frame")
+	fill.BackgroundColor3 = T.accent
+	fill.BorderSizePixel = 0
+	fill.ZIndex = holder.ZIndex
+	fill.Parent = track
+	round(fill, 4)
+	local fg = Instance.new("UIGradient")
+	fg.Color = ColorSequence.new(Color3.fromRGB(255, 255, 255), Color3.fromRGB(170, 170, 170))
+	fg.Rotation = 90
+	fg.Parent = fill
+	table.insert(AccentUsers, function() fill.BackgroundColor3 = T.accent end)
+
+	local knob = Instance.new("Frame")
+	knob.Size = UDim2.fromOffset(6, 12)
+	knob.BackgroundColor3 = Color3.fromRGB(220, 220, 220)
+	knob.BorderSizePixel = 0
+	knob.ZIndex = holder.ZIndex + 1
+	knob.Parent = track
+	round(knob, 3)
+	stroke(knob, Color3.fromRGB(4, 4, 4))
+
+	local value = Flags[flag]
+	local function setValue(v, fire)
+		v = math.clamp(math.round(v / step) * step, min, max)
+		value = tonumber(string.format("%.3f", v))
+		Flags[flag] = value
+		local a = (value - min) / (max - min)
+		fill.Size = UDim2.new(a, 0, 1, 0)
+		knob.Position = UDim2.new(a, -3, 0.5, -6)
+		valBox.Text = fmtNum(value) .. (opts.suffix or "")
+		if fire and opts.callback then opts.callback(value) end
+	end
+	FlagSetters[flag] = function(v) setValue(v, true) end
+	setValue(value, false)
+
+	valBox.Focused:Connect(function()
+		valBox.Text = fmtNum(value) -- strip suffix for editing
+	end)
+	valBox.FocusLost:Connect(function()
+		-- parens: gsub returns (string, count) and tonumber(s, n) errors
+		local n = tonumber((valBox.Text:gsub("[^%d%.%-]", "")))
+		if n then setValue(n, true) else setValue(value, false) end
+	end)
+
+	local sliding = false
+	track.InputBegan:Connect(function(i)
+		if i.UserInputType == Enum.UserInputType.MouseButton1 then
+			sliding = true
+			setValue(min + ((i.Position.X - track.AbsolutePosition.X) / track.AbsoluteSize.X) * (max - min), true)
+		end
+	end)
+	UserInputService.InputEnded:Connect(function(i)
+		if i.UserInputType == Enum.UserInputType.MouseButton1 then sliding = false end
+	end)
+	UserInputService.InputChanged:Connect(function(i)
+		if sliding and i.UserInputType == Enum.UserInputType.MouseMovement then
+			local a = math.clamp((i.Position.X - track.AbsolutePosition.X) / track.AbsoluteSize.X, 0, 1)
+			setValue(min + a * (max - min), true)
+		end
+	end)
+	if opts.tooltip then attachTooltip(holder, opts.tooltip) end
+	table.insert(Searchables, { label = opts.text or "", holder = holder })
+	return holder
+end
+
+-- Dropdown: opens directly below; single = chevron, multi = hamburger (≡)
+-- selected option shown bold + accent (like "Solid" / "none" in reference)
+local function buildDropdown(parent, opts)
+	local flag, multi = opts.flag, opts.multi
+	local value = opts.default or (multi and {} or opts.options[1])
+	Flags[flag] = value
+
+	local holder = Instance.new("Frame")
+	holder.Size = UDim2.new(opts.half and 0.5 or 1, opts.half and -3 or 0, 0, opts.label and 38 or 20)
+	holder.BackgroundTransparency = 1
+	holder.ZIndex = (parent.ZIndex or 1) + 1
+	holder.Parent = parent
+
+	local y = 0
+	if opts.label then
+		local l = txt(holder, opts.label, 14, T.dim)
+		l.Size = UDim2.new(1, 0, 0, 12)
+		y = 16
+	end
+
+	local btn = Instance.new("TextButton")
+	btn.Size = UDim2.new(1, 0, 0, 20)
+	btn.Position = UDim2.fromOffset(0, y)
+	btn.BackgroundColor3 = T.element
+	btn.Text = ""
+	btn.AutoButtonColor = false
+	btn.ZIndex = holder.ZIndex
+	btn.Parent = holder
+	styleElement(btn, true)
+
+	local btnLbl = txt(btn, "", 14, T.text)
+	btnLbl.Size = UDim2.new(1, -24, 1, 0)
+	btnLbl.Position = UDim2.fromOffset(6, 0)
+	btnLbl.TextTruncate = Enum.TextTruncate.AtEnd
+	local chev = icon(btn, multi and "menu" or "chevron-down", 12, T.dim)
+	chev.AnchorPoint = Vector2.new(0.5, 0.5)
+	chev.Position = UDim2.new(1, -11, 0.5, 0)
+
+	local function displayText()
+		if multi then return #value == 0 and "none" or table.concat(value, ", ") end
+		return tostring(value)
+	end
+	btnLbl.Text = displayText()
+
+	local function apply(v)
+		value = v
+		Flags[flag] = v
+		btnLbl.Text = displayText()
+		if opts.callback then opts.callback(v) end
+	end
+	FlagSetters[flag] = apply
+
+	btn.MouseButton1Click:Connect(function()
+		if togglePopupFor(btn) then return end -- re-click closes own list
+		local lvl = popupLevelFor(btn)         -- nested when inside a gear popup
+		local pop = popupBelow(btn, math.max(btn.AbsoluteSize.X, opts.popW or 0), lvl)
+		local z = pop.ZIndex + 1
+		if opts.header then
+			local h = txt(pop, opts.header, 14, T.dim)
+			h.Size = UDim2.new(1, 0, 0, 14)
+			h.ZIndex = z
+		end
+		-- options live in an invisible scroller so long lists wheel-scroll
+		local optHolder = Instance.new("ScrollingFrame")
+		optHolder.Size = UDim2.new(1, 0, 0, math.min(#opts.options * 16, 190))
+		optHolder.BackgroundTransparency = 1
+		optHolder.BorderSizePixel = 0
+		optHolder.ScrollBarThickness = 0
+		optHolder.ScrollingDirection = Enum.ScrollingDirection.Y
+		optHolder.AutomaticCanvasSize = Enum.AutomaticSize.Y
+		optHolder.CanvasSize = UDim2.new()
+		optHolder.ZIndex = z
+		optHolder.Parent = pop
+		local optList = Instance.new("UIListLayout")
+		optList.SortOrder = Enum.SortOrder.LayoutOrder
+		optList.Parent = optHolder
+		for _, optName in ipairs(opts.options) do
+			local o = Instance.new("TextButton")
+			o.Size = UDim2.new(1, 0, 0, 16)
+			o.BackgroundTransparency = 1
+			o.Text = optName
+			o.TextSize = 14
+			o.FontFace = VERDANA
+			o.TextXAlignment = Enum.TextXAlignment.Left
+			o.ZIndex = z
+			o.Parent = optHolder
+			local function refresh()
+				local sel = multi and (table.find(value, optName) ~= nil) or (value == optName)
+				o.TextColor3 = sel and T.accent or T.dim
+				o.FontFace = sel and VERDANA_BOLD or VERDANA
+			end
+			refresh()
+			o.MouseButton1Click:Connect(function()
+				if multi then
+					local idx = table.find(value, optName)
+					if idx then table.remove(value, idx) else table.insert(value, optName) end
+					apply(value)
+					refresh()
+				else
+					apply(optName)
+					closePopupsFrom(lvl)
+				end
+			end)
+		end
+	end)
+	if opts.tooltip then attachTooltip(holder, opts.tooltip) end
+	table.insert(Searchables, { label = opts.label or "", holder = holder })
+	return holder
+end
+
+local buildToggle -- fwd decl (chip MB2 menu uses it before its definition)
+
+-- Keybind chip: "Toggle: NONE" (photo style) — usable inline on a toggle row
+local function keyNameOf(input)
+	if input.UserInputType == Enum.UserInputType.Keyboard then return input.KeyCode.Name
+	elseif input.UserInputType == Enum.UserInputType.MouseButton2 then return "MB2"
+	elseif input.UserInputType == Enum.UserInputType.MouseButton3 then return "MB3" end
+end
+
+local function attachKeybindChip(holder, opts)
+	local flag = opts.flag
+	local bound = opts.default or "NONE"
+	Flags[flag] = bound
+
+	local btn = Instance.new("TextButton")
+	btn.Size = UDim2.fromOffset(84, 16)
+	btn.Position = UDim2.new(1, -(opts.rightPad or 0) - 84, 0, 1)
+	btn.BackgroundColor3 = T.element
+	btn.TextSize = 12
+	btn.FontFace = VERDANA
+	btn.TextColor3 = T.dim
+	btn.AutoButtonColor = false
+	btn.BorderSizePixel = 0
+	btn.ZIndex = holder.ZIndex + 1
+	btn.Parent = holder
+	styleElement(btn, true)
+
+	local listening = false
+	local function refresh() btn.Text = listening and "Toggle: ..." or ("Toggle: " .. bound) end
+	refresh()
+
+	local entry = { name = opts.text or flag, key = bound, flag = flag, active = false }
+	table.insert(Keybinds, entry)
+
+	local function setBind(name)
+		bound = name entry.key = name Flags[flag] = name refresh()
+	end
+	FlagSetters[flag] = setBind
+
+	btn.MouseButton1Click:Connect(function() listening = true refresh() end)
+	-- MB2 on the chip: mode (Toggle/Hold/Always), show in list, reset key
+	Flags[flag .. "_mode"] = Flags[flag .. "_mode"] or "Toggle"
+	Flags[flag .. "_show"] = Flags[flag .. "_show"] ~= false
+	btn.MouseButton2Click:Connect(function()
+		if togglePopupFor(btn) then return end
+		local pop = popupAtMouse(180, popupLevelFor(btn), btn)
+		buildDropdown(pop, { flag = flag .. "_mode", label = "mode",
+			options = { "Toggle", "Hold", "Always" }, default = Flags[flag .. "_mode"] })
+		buildToggle(pop, { flag = flag .. "_show", text = "show in list", default = Flags[flag .. "_show"] })
+		local rk = Instance.new("TextButton")
+		rk.Size = UDim2.new(1, 0, 0, 20)
+		rk.Text = "reset key"
+		rk.TextSize = 14
+		rk.FontFace = VERDANA
+		rk.TextColor3 = T.text
+		rk.AutoButtonColor = false
+		rk.ZIndex = pop.ZIndex + 1
+		rk.Parent = pop
+		styleElement(rk, true)
+		rk.MouseButton1Click:Connect(function() setBind("NONE") end)
+	end)
+	UserInputService.InputBegan:Connect(function(input, gpe)
+		if listening then
+			if input.KeyCode == Enum.KeyCode.Escape or input.KeyCode == Enum.KeyCode.Backspace then
+				listening = false setBind("NONE") return
+			end
+			local n = keyNameOf(input)
+			if n then listening = false setBind(n) end
+			return
+		end
+		if gpe then return end
+		local n = keyNameOf(input)
+		if n and n == bound then
+			local mode = Flags[flag .. "_mode"] or "Toggle"
+			if mode == "Hold" then entry.active = true
+			elseif mode == "Toggle" then entry.active = not entry.active end
+			if opts.onPressed then opts.onPressed() end
+		end
+	end)
+	UserInputService.InputEnded:Connect(function(input)
+		local n = keyNameOf(input)
+		if n and n == bound and (Flags[flag .. "_mode"] or "Toggle") == "Hold" then
+			entry.active = false
+			if opts.onPressed then opts.onPressed() end -- hold releases the toggle
+		end
+	end)
+	return btn
+end
+
+-- Standalone keybind row (Settings page "menu keybind")
+local function buildKeybind(parent, opts)
+	local holder = Instance.new("Frame")
+	holder.Size = UDim2.new(1, 0, 0, 20)
+	holder.BackgroundTransparency = 1
+	holder.ZIndex = (parent.ZIndex or 1) + 1
+	holder.Parent = parent
+	local l = txt(holder, opts.text, 14, T.dim)
+	l.Size = UDim2.new(1, -90, 1, 0)
+	attachKeybindChip(holder, opts)
+	return holder
+end
+
+-- Color picker (reference style): Solid | Animations tabs.
+-- Solid: SV box, hue bar, current-color bar, "R, G, B," + Copy + Paste, Reset
+-- Animations: Mode, Speed %, two Colors, Easing Style/Direction (Tween only)
+local buildSubTabs -- fwd decl (defined below, used by the picker)
+
+local function buildColorPopup(pop, flag, callback, solidOnly)
+	local defaultCol = Flags[flag] or Color3.fromRGB(255, 0, 0)
+	local col = defaultCol
+	local h, s, v = col:ToHSV()
+	local z = pop.ZIndex + 1
+
+	local function page()
+		local f = Instance.new("Frame")
+		f.Size = UDim2.new(1, 0, 0, 0)
+		f.AutomaticSize = Enum.AutomaticSize.Y
+		f.BackgroundTransparency = 1
+		f.ZIndex = z
+		f.Parent = pop
+		local ll = Instance.new("UIListLayout")
+		ll.SortOrder = Enum.SortOrder.LayoutOrder
+		ll.Padding = UDim.new(0, 5)
+		ll.Parent = f
+		return f
+	end
+	local solidPage, animPage = page(), page()
+	animPage.Visible = false
+	if solidOnly then
+		-- nested pickers (an animation's Color rows) are Solid only — you
+		-- can't animate a color that's already part of an animation
+		local hdr = txt(pop, "Solid", 14, T.accent2, true)
+		hdr.Size = UDim2.new(1, 0, 0, 16)
+		hdr.TextXAlignment = Enum.TextXAlignment.Center
+		hdr.LayoutOrder = -1
+		hdr.ZIndex = z
+	else
+		buildSubTabs(pop, { "Solid", "Animations" }, function(n)
+			solidPage.Visible = n == "Solid"
+			animPage.Visible = n == "Animations"
+		end).LayoutOrder = -1
+	end
+
+	-- ===== Solid =====
+	local sv = Instance.new("ImageButton")
+	sv.Size = UDim2.new(1, 0, 0, 120)
+	sv.BackgroundColor3 = Color3.fromHSV(h, 1, 1)
+	sv.AutoButtonColor = false
+	sv.Image = ""
+	sv.BorderSizePixel = 0
+	sv.ZIndex = z
+	sv.Parent = solidPage
+	stroke(sv, Color3.fromRGB(4, 4, 4))
+	local satGrad = Instance.new("Frame")
+	satGrad.Size = UDim2.fromScale(1, 1)
+	satGrad.BackgroundColor3 = Color3.new(1, 1, 1)
+	satGrad.BorderSizePixel = 0
+	satGrad.ZIndex = z
+	satGrad.Parent = sv
+	local sg = Instance.new("UIGradient")
+	sg.Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0), NumberSequenceKeypoint.new(1, 1) })
+	sg.Parent = satGrad
+	local valGrad = Instance.new("Frame")
+	valGrad.Size = UDim2.fromScale(1, 1)
+	valGrad.BackgroundColor3 = Color3.new(0, 0, 0)
+	valGrad.BorderSizePixel = 0
+	valGrad.ZIndex = z + 1
+	valGrad.Parent = sv
+	local vg = Instance.new("UIGradient")
+	vg.Rotation = 90
+	vg.Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(1, 0) })
+	vg.Parent = valGrad
+	local svCursor = Instance.new("Frame")
+	svCursor.Size = UDim2.fromOffset(5, 5)
+	svCursor.BackgroundColor3 = Color3.new(1, 1, 1)
+	svCursor.BorderSizePixel = 0
+	svCursor.ZIndex = z + 2
+	svCursor.Parent = sv
+	round(svCursor, 3)
+	stroke(svCursor, Color3.new(0, 0, 0), 1)
+
+	local hueBar = Instance.new("ImageButton")
+	hueBar.Size = UDim2.new(1, 0, 0, 12)
+	hueBar.AutoButtonColor = false
+	hueBar.Image = ""
+	hueBar.BackgroundColor3 = Color3.new(1, 1, 1)
+	hueBar.BorderSizePixel = 0
+	hueBar.ZIndex = z
+	hueBar.Parent = solidPage
+	stroke(hueBar, Color3.fromRGB(4, 4, 4))
+	local hg = Instance.new("UIGradient")
+	hg.Color = ColorSequence.new({
+		ColorSequenceKeypoint.new(0.00, Color3.fromRGB(255, 0, 0)),
+		ColorSequenceKeypoint.new(0.17, Color3.fromRGB(255, 255, 0)),
+		ColorSequenceKeypoint.new(0.33, Color3.fromRGB(0, 255, 0)),
+		ColorSequenceKeypoint.new(0.50, Color3.fromRGB(0, 255, 255)),
+		ColorSequenceKeypoint.new(0.67, Color3.fromRGB(0, 0, 255)),
+		ColorSequenceKeypoint.new(0.83, Color3.fromRGB(255, 0, 255)),
+		ColorSequenceKeypoint.new(1.00, Color3.fromRGB(255, 0, 0)),
+	})
+	hg.Parent = hueBar
+	local hueCursor = Instance.new("Frame")
+	hueCursor.Size = UDim2.new(0, 3, 1, 2)
+	hueCursor.Position = UDim2.new(h, -1, 0, -1)
+	hueCursor.BackgroundColor3 = Color3.new(1, 1, 1)
+	hueCursor.BorderSizePixel = 0
+	hueCursor.ZIndex = z + 1
+	hueCursor.Parent = hueBar
+	stroke(hueCursor, Color3.new(0, 0, 0), 1)
+
+	-- current color bar (below the hue bar, like the reference)
+	local curBar = Instance.new("Frame")
+	curBar.Size = UDim2.new(1, 0, 0, 14)
+	curBar.BackgroundColor3 = col
+	curBar.BorderSizePixel = 0
+	curBar.ZIndex = z
+	curBar.Parent = solidPage
+	stroke(curBar, Color3.fromRGB(4, 4, 4))
+
+	-- "255, 120, 160," | Copy | Paste
+	local rgbRow = Instance.new("Frame")
+	rgbRow.Size = UDim2.new(1, 0, 0, 20)
+	rgbRow.BackgroundTransparency = 1
+	rgbRow.ZIndex = z
+	rgbRow.Parent = solidPage
+	local rgbBox = Instance.new("TextBox")
+	rgbBox.Size = UDim2.new(0.5, -4, 1, 0)
+	rgbBox.Text = ""
+	rgbBox.TextSize = 12
+	rgbBox.FontFace = VERDANA
+	rgbBox.TextColor3 = T.text
+	rgbBox.TextXAlignment = Enum.TextXAlignment.Left
+	rgbBox.ClearTextOnFocus = false
+	rgbBox.ZIndex = z
+	rgbBox.Parent = rgbRow
+	styleElement(rgbBox)
+	pad(rgbBox, 5, 0)
+	local copyBtn = Instance.new("TextButton")
+	copyBtn.Size = UDim2.new(0.25, -3, 1, 0)
+	copyBtn.Position = UDim2.new(0.5, 2, 0, 0)
+	copyBtn.Text = "Copy"
+	copyBtn.TextSize = 12
+	copyBtn.FontFace = VERDANA
+	copyBtn.TextColor3 = T.text
+	copyBtn.AutoButtonColor = false
+	copyBtn.ZIndex = z
+	copyBtn.Parent = rgbRow
+	styleElement(copyBtn, true)
+	local pasteBtn = Instance.new("TextButton")
+	pasteBtn.Size = UDim2.new(0.25, -3, 1, 0)
+	pasteBtn.Position = UDim2.new(0.75, 3, 0, 0)
+	pasteBtn.Text = "Paste"
+	pasteBtn.TextSize = 12
+	pasteBtn.FontFace = VERDANA
+	pasteBtn.TextColor3 = T.text
+	pasteBtn.AutoButtonColor = false
+	pasteBtn.ZIndex = z
+	pasteBtn.Parent = rgbRow
+	styleElement(pasteBtn, true)
+
+	local resetBtn = Instance.new("TextButton")
+	resetBtn.Size = UDim2.new(1, 0, 0, 20)
+	resetBtn.Text = "Reset"
+	resetBtn.TextSize = 12
+	resetBtn.FontFace = VERDANA
+	resetBtn.TextColor3 = T.text
+	resetBtn.AutoButtonColor = false
+	resetBtn.ZIndex = z
+	resetBtn.Parent = solidPage
+	styleElement(resetBtn, true)
+
+	-- picker internals must never be recolored by the theme engine
+	for _, o in ipairs({ sv, satGrad, valGrad, svCursor, hueBar, hueCursor, curBar }) do
+		o:SetAttribute("ThemeExempt", true)
+	end
+
+	local function push()
+		local c = Color3.fromHSV(h, s, v)
+		col = c
+		Flags[flag] = c
+		sv.BackgroundColor3 = Color3.fromHSV(h, 1, 1)
+		svCursor.Position = UDim2.new(s, -2, 1 - v, -2)
+		hueCursor.Position = UDim2.new(h, -1, 0, -1)
+		curBar.BackgroundColor3 = c
+		rgbBox.Text = ("%d, %d, %d,"):format(c.R * 255 + 0.5, c.G * 255 + 0.5, c.B * 255 + 0.5)
+		if callback then callback(c) end
+		-- ALSO fire the flag's setter so targets bound to the flag (accent,
+		-- theme colors, esp colors...) actually change, not just the swatch
+		if FlagSetters[flag] then FlagSetters[flag](c) end
+	end
+	push()
+
+	-- mirror the flag's live color (animations included) on the Solid page
+	-- every frame while the picker is open — bar, rgb text, and SV cursors
+	local liveConn
+	liveConn = RunService.RenderStepped:Connect(function()
+		if not pop.Parent then liveConn:Disconnect() return end
+		local c = Flags[flag]
+		if typeof(c) == "Color3" and c ~= curBar.BackgroundColor3 then
+			curBar.BackgroundColor3 = c
+			local mode = Flags[flag .. "_mode"]
+			if mode and mode ~= "Solid" then
+				rgbBox.Text = ("%d, %d, %d,"):format(c.R * 255 + 0.5, c.G * 255 + 0.5, c.B * 255 + 0.5)
+				local nh, ns, nv = c:ToHSV()
+				svCursor.Position = UDim2.new(ns, -2, 1 - nv, -2)
+				hueCursor.Position = UDim2.new(nh, -1, 0, -1)
+				sv.BackgroundColor3 = Color3.fromHSV(nh, 1, 1)
+			end
+		end
+	end)
+
+	rgbBox.FocusLost:Connect(function()
+		local r, g, b = rgbBox.Text:match("(%d+)%D+(%d+)%D+(%d+)")
+		if r then
+			local c = Color3.fromRGB(math.clamp(tonumber(r), 0, 255),
+				math.clamp(tonumber(g), 0, 255), math.clamp(tonumber(b), 0, 255))
+			h, s, v = c:ToHSV()
+		end
+		push()
+	end)
+	copyBtn.MouseButton1Click:Connect(function()
+		pcall(function() setclipboard(("%d, %d, %d"):format(col.R * 255 + 0.5, col.G * 255 + 0.5, col.B * 255 + 0.5)) end)
+	end)
+	pasteBtn.MouseButton1Click:Connect(function()
+		pcall(function()
+			local r, g, b = tostring(getclipboard()):match("(%d+)%D+(%d+)%D+(%d+)")
+			if r then
+				h, s, v = Color3.fromRGB(math.clamp(tonumber(r), 0, 255),
+					math.clamp(tonumber(g), 0, 255), math.clamp(tonumber(b), 0, 255)):ToHSV()
+				push()
+			end
+		end)
+	end)
+	resetBtn.MouseButton1Click:Connect(function()
+		h, s, v = defaultCol:ToHSV()
+		push()
+	end)
+
+	-- ===== Animations =====
+	-- per-mode settings (reference): Rainbow = Speed only; Fading/Strobe =
+	-- Speed + two Colors; Tween = Speed + Colors + Easing Style/Direction
+	local function refreshModeRows(mode)
+		for _, o in ipairs(animPage:GetChildren()) do
+			if o.Name == "TweenOnly" then o.Visible = mode == "Tween" end
+			if o.Name == "ColorRow" then o.Visible = (mode == "Fading" or mode == "Strobe" or mode == "Tween") end
+			if o.Name == "SpeedRow" then o.Visible = mode ~= "Solid" end
+		end
+	end
+	buildDropdown(animPage, { flag = flag .. "_mode", label = "Mode",
+		options = { "Rainbow", "Fading", "Strobe", "Tween", "Solid" }, default = Flags[flag .. "_mode"] or "Solid",
+		callback = refreshModeRows })
+	local speedRow = buildSlider(animPage, { flag = flag .. "_speed", text = "Speed", min = 1, max = 100, step = 1,
+		default = Flags[flag .. "_speed"] or 50, suffix = "%" })
+	speedRow.Name = "SpeedRow"
+
+	local function colorRow(cflag, def)
+		Flags[cflag] = Flags[cflag] or def
+		local row = Instance.new("Frame")
+		row.Name = "ColorRow"
+		row.Size = UDim2.new(1, 0, 0, 16)
+		row.BackgroundTransparency = 1
+		row.ZIndex = z
+		row.Parent = animPage
+		local l = txt(row, "Color", 14, T.dim)
+		l.Size = UDim2.new(1, -30, 1, 0)
+		local sw = Instance.new("TextButton")
+		sw:SetAttribute("ThemeExempt", true)
+		sw.Size = UDim2.fromOffset(24, 11)
+		sw.Position = UDim2.new(1, -24, 0, 2)
+		sw.Text = ""
+		sw.AutoButtonColor = false
+		sw.BackgroundColor3 = Flags[cflag]
+		sw.BorderSizePixel = 0
+		sw.ZIndex = z
+		sw.Parent = row
+		round(sw, 3)
+		stroke(sw, Color3.fromRGB(4, 4, 4))
+		sw.MouseButton1Click:Connect(function()
+			local lvl = popupLevelFor(sw)
+			local sub = popupAtMouse(170, lvl, sw)
+			buildColorPopup(sub, cflag, function(c) sw.BackgroundColor3 = c end, true) -- Solid only
+		end)
+		return row
+	end
+	colorRow(flag .. "_anim1", Color3.fromRGB(255, 0, 0))
+	colorRow(flag .. "_anim2", Color3.fromRGB(235, 235, 235))
+
+	local easeStyle = buildDropdown(animPage, { flag = flag .. "_ease_style", label = "Easing Style",
+		options = { "Linear", "Sine", "Quad", "Cubic", "Quart", "Bounce", "Elastic" },
+		default = Flags[flag .. "_ease_style"] or "Quad" })
+	easeStyle.Name = "TweenOnly"
+	local easeDir = buildDropdown(animPage, { flag = flag .. "_ease_dir", label = "Easing Direction",
+		options = { "In", "Out", "InOut" }, default = Flags[flag .. "_ease_dir"] or "InOut" })
+	easeDir.Name = "TweenOnly"
+	refreshModeRows(Flags[flag .. "_mode"] or "Solid")
+
+	-- drag (compare in the popup layer's raw-screen space)
+	local svDrag, hueDrag = false, false
+	sv.InputBegan:Connect(function(i) if i.UserInputType == Enum.UserInputType.MouseButton1 then svDrag = true end end)
+	hueBar.InputBegan:Connect(function(i) if i.UserInputType == Enum.UserInputType.MouseButton1 then hueDrag = true end end)
+	UserInputService.InputEnded:Connect(function(i)
+		if i.UserInputType == Enum.UserInputType.MouseButton1 then svDrag, hueDrag = false, false end
+	end)
+	RunService.RenderStepped:Connect(function()
+		if not (sv and sv.Parent) then return end
+		local m = UserInputService:GetMouseLocation()
+		if svDrag then
+			local p = sv.AbsolutePosition - popupLayer.AbsolutePosition
+			s = math.clamp((m.X - p.X) / sv.AbsoluteSize.X, 0, 1)
+			v = 1 - math.clamp((m.Y - p.Y) / sv.AbsoluteSize.Y, 0, 1)
+			push()
+		elseif hueDrag then
+			local p = hueBar.AbsolutePosition - popupLayer.AbsolutePosition
+			h = math.clamp((m.X - p.X) / hueBar.AbsoluteSize.X, 0, 1)
+			push()
+		end
+	end)
+end
+
+-- Toggle: filled checkbox, optional: gear popout, 1-2 color swatches
+-- (pill shaped like reference), keybind chip ("Toggle: NONE")
+function buildToggle(parent, opts)
+	local flag = opts.flag
+	local state = opts.default or false
+	Flags[flag] = state
+
+	local holder = Instance.new("Frame")
+	holder.Size = UDim2.new(1, 0, 0, 19)
+	holder.BackgroundTransparency = 1
+	holder.ZIndex = (parent.ZIndex or 1) + 1
+	holder.Parent = parent
+
+	local box = Instance.new("Frame")
+	box.Size = UDim2.fromOffset(12, 12)
+	box.Position = UDim2.fromOffset(0, 3)
+	box.BorderSizePixel = 0
+	box.ZIndex = holder.ZIndex
+	box.Parent = holder
+	round(box, 2)
+	stroke(box, Color3.fromRGB(4, 4, 4))
+
+	local l = txt(holder, opts.text, 14, T.dim)
+	l.Position = UDim2.fromOffset(19, 0)
+	l.Size = UDim2.new(1, -60, 1, 0)
+
+	local function refresh()
+		box.BackgroundColor3 = state and T.accent or T.element
+		l.TextColor3 = state and T.text or T.dim
+	end
+	table.insert(AccentUsers, refresh)
+	local function set(v, fire)
+		state = v Flags[flag] = v refresh()
+		if fire and opts.callback then opts.callback(v) end
+	end
+	FlagSetters[flag] = function(v) set(v, true) end
+	set(state, false)
+
+	local rightX = 0
+
+	-- gear at far right (photo: gear sits rightmost)
+	local gearAt
+	if opts.gear then
+		gearAt = rightX
+		rightX += 18
+	end
+
+	-- color swatches: pill shaped, stacked right-to-left before the gear
+	if opts.colors then
+		for idx = #opts.colors, 1, -1 do
+			local def = opts.colors[idx]
+			local cflag = flag .. "_color" .. (idx > 1 and idx or "")
+			Flags[cflag] = def
+			table.insert(AnimColorFlags, cflag)
+			local swatch = Instance.new("TextButton")
+			swatch:SetAttribute("ThemeExempt", true)
+			swatch.Size = UDim2.fromOffset(22, 10)
+			swatch.Position = UDim2.new(1, -rightX - 22, 0, 4)
+			swatch.Text = ""
+			swatch.AutoButtonColor = false
+			swatch.BackgroundColor3 = def
+			swatch.BorderSizePixel = 0
+			swatch.ZIndex = holder.ZIndex + 1
+			swatch.Parent = holder
+			round(swatch, 5)
+			stroke(swatch, T.line2)
+			FlagSetters[cflag] = function(c) swatch.BackgroundColor3 = c end
+			swatch.MouseButton1Click:Connect(function()
+				if togglePopupFor(swatch) then return end
+				local pop = popupAtMouse(180, popupLevelFor(swatch), swatch)
+				buildColorPopup(pop, cflag, function(c) swatch.BackgroundColor3 = c end)
+			end)
+			rightX += 27
+		end
+	end
+
+	if opts.gear then
+		local gearBtn = Instance.new("ImageButton")
+		gearBtn.Size = UDim2.fromOffset(13, 13)
+		gearBtn.Position = UDim2.new(1, -gearAt - 14, 0, 3)
+		gearBtn.BackgroundTransparency = 1
+		local gImg, gRS, gRO = getIcon("settings")
+		gearBtn.Image = gImg or ""
+		if gRS then gearBtn.ImageRectSize = gRS end
+		if gRO then gearBtn.ImageRectOffset = gRO end
+		gearBtn.ImageColor3 = T.dim
+		gearBtn.ZIndex = holder.ZIndex + 1
+		gearBtn.Parent = holder
+		gearBtn.MouseEnter:Connect(function() gearBtn.ImageColor3 = T.text end)
+		gearBtn.MouseLeave:Connect(function() gearBtn.ImageColor3 = T.dim end)
+		gearBtn.MouseButton1Click:Connect(function()
+			if togglePopupFor(gearBtn) then return end
+			local pop = popupAtMouse(opts.gearWidth or 180, popupLevelFor(gearBtn), gearBtn)
+			opts.gear(pop)
+		end)
+	end
+
+	-- keybind chip inline ("Toggle: NONE" like reference Target Selection)
+	if opts.keyFlag then
+		attachKeybindChip(holder, {
+			flag = opts.keyFlag, text = opts.text, rightPad = rightX + 4,
+			onPressed = function() set(not state, true) end,
+		})
+		rightX += 92
+	end
+
+	local click = Instance.new("TextButton")
+	click.Size = UDim2.new(1, -(rightX + 4), 1, 0)
+	click.BackgroundTransparency = 1
+	click.Text = ""
+	click.ZIndex = holder.ZIndex
+	click.Parent = holder
+	click.MouseButton1Click:Connect(function() set(not state, true) end)
+
+	if opts.tooltip then attachTooltip(holder, opts.tooltip) end
+	table.insert(Searchables, { label = opts.text or "", holder = holder })
+	return holder, function() return state end
+end
+
+-- Button: flat bar
+local function buildActionButton(parent, opts)
+	local b = Instance.new("TextButton")
+	b.Size = UDim2.new(1, 0, 0, 22)
+	b.BackgroundColor3 = T.element
+	b.Text = opts.text
+	b.TextSize = 14
+	b.FontFace = VERDANA
+	b.TextColor3 = opts.dim and T.dim or T.text
+	b.AutoButtonColor = false
+	b.BorderSizePixel = 0
+	b.ZIndex = (parent.ZIndex or 1) + 1
+	b.Parent = parent
+	styleElement(b, true)
+	if opts.callback then b.MouseButton1Click:Connect(opts.callback) end
+	return b
+end
+
+-- Two buttons side by side (photo: "save | load", "delete | refresh")
+local function buildButtonPair(parent, leftOpts, rightOpts)
+	local row = Instance.new("Frame")
+	row.Size = UDim2.new(1, 0, 0, 22)
+	row.BackgroundTransparency = 1
+	row.ZIndex = (parent.ZIndex or 1) + 1
+	row.Parent = parent
+	local function mk(o, x)
+		local b = Instance.new("TextButton")
+		b.Size = UDim2.new(0.5, -3, 1, 0)
+		b.Position = UDim2.new(x, x == 0.5 and 3 or 0, 0, 0)
+		b.BackgroundColor3 = T.element
+		b.Text = o.text
+		b.TextSize = 14
+		b.FontFace = VERDANA
+		b.TextColor3 = o.dim and T.dim or T.text
+		b.AutoButtonColor = false
+		b.BorderSizePixel = 0
+		b.ZIndex = row.ZIndex
+		b.Parent = row
+		styleElement(b, true)
+		if o.callback then b.MouseButton1Click:Connect(o.callback) end
+		return b
+	end
+	return row, mk(leftOpts, 0), mk(rightOpts, 0.5)
+end
+
+-- Textbox
+local function buildTextbox(parent, opts)
+	local holder = Instance.new("Frame")
+	holder.Size = UDim2.new(1, 0, 0, opts.label and 38 or 20)
+	holder.BackgroundTransparency = 1
+	holder.ZIndex = (parent.ZIndex or 1) + 1
+	holder.Parent = parent
+	local y = 0
+	if opts.label then
+		local l = txt(holder, opts.label, 14, T.dim)
+		l.Size = UDim2.new(1, 0, 0, 12)
+		y = 16
+	end
+	local box = Instance.new("TextBox")
+	box.Size = UDim2.new(1, 0, 0, 20)
+	box.Position = UDim2.fromOffset(0, y)
+	box.BackgroundColor3 = T.element
+	box.PlaceholderText = opts.placeholder or ""
+	box.PlaceholderColor3 = T.dim
+	box.Text = opts.default or ""
+	box.TextSize = 14
+	box.FontFace = VERDANA
+	box.TextColor3 = T.text
+	box.TextXAlignment = Enum.TextXAlignment.Left
+	box.ClearTextOnFocus = false
+	box.ZIndex = holder.ZIndex
+	box.Parent = holder
+	styleElement(box)
+	pad(box, 6, 0)
+	return holder, box
+end
+
+-- Search row: [ search... ][ search ][ clear ]  (photo: weapon / skin select)
+local function buildSearchRow(parent, opts)
+	local row = Instance.new("Frame")
+	row.Size = UDim2.new(1, 0, 0, opts.label and 36 or 20)
+	row.BackgroundTransparency = 1
+	row.ZIndex = (parent.ZIndex or 1) + 1
+	row.Parent = parent
+	local y = 0
+	if opts.label then
+		local l = txt(row, opts.label, 14, T.dim)
+		l.Size = UDim2.new(1, 0, 0, 12)
+		y = 16
+	end
+	local box = Instance.new("TextBox")
+	box.Size = UDim2.new(0.4, -4, 0, 18)
+	box.Position = UDim2.fromOffset(0, y)
+	box.BackgroundColor3 = T.element
+	box.PlaceholderText = opts.placeholder or "search..."
+	box.PlaceholderColor3 = T.dim
+	box.Text = "" box.TextSize = 12 box.FontFace = VERDANA box.TextColor3 = T.text
+	box.ClearTextOnFocus = false
+	box.ZIndex = row.ZIndex box.Parent = row styleElement(box) pad(box, 5, 0)
+	local sb = Instance.new("TextButton")
+	sb.Size = UDim2.new(0.3, -4, 0, 18)
+	sb.Position = UDim2.new(0.4, 2, 0, y)
+	sb.BackgroundColor3 = T.element
+	sb.Text = "search" sb.TextSize = 12 sb.FontFace = VERDANA sb.TextColor3 = T.text
+	sb.AutoButtonColor = false
+	sb.ZIndex = row.ZIndex sb.Parent = row styleElement(sb, true)
+	local cb = Instance.new("TextButton")
+	cb.Size = UDim2.new(0.3, -2, 0, 18)
+	cb.Position = UDim2.new(0.7, 2, 0, y)
+	cb.BackgroundColor3 = T.element
+	cb.Text = "clear" cb.TextSize = 12 cb.FontFace = VERDANA cb.TextColor3 = T.text
+	cb.AutoButtonColor = false
+	cb.ZIndex = row.ZIndex cb.Parent = row styleElement(cb, true)
+	if opts.onSearch then sb.MouseButton1Click:Connect(function() opts.onSearch(box.Text) end) end
+	cb.MouseButton1Click:Connect(function()
+		box.Text = ""
+		if opts.onSearch then opts.onSearch("") end
+	end)
+	return row, box
+end
+
+-- Section: flat panel — bold header + accent-tinted divider, scroll body
+local function buildSection(page, opts)
+	local outer = Instance.new("Frame")
+	outer.Name = (opts.title or "Section") .. "Section"
+	outer.Size = UDim2.new(0, opts.w, 0, opts.h)
+	outer.Position = UDim2.fromOffset(opts.x, opts.y)
+	outer.BackgroundColor3 = T.section
+	outer.BorderSizePixel = 0
+	outer.ZIndex = 2
+	outer.Parent = page
+	stroke(outer, Color3.fromRGB(4, 4, 4)) -- square corners, black outline
+
+	local h = txt(outer, opts.title, 14, T.text, true)
+	h.Size = UDim2.new(1, -20, 0, 24)
+	h.Position = UDim2.fromOffset(10, 0)
+	local div = hline(outer, 24, T.accent, 2)
+	div.BackgroundTransparency = 0.35
+	table.insert(AccentUsers, function() div.BackgroundColor3 = T.accent end)
+
+	local body = Instance.new("ScrollingFrame")
+	body.Size = UDim2.new(1, 0, 1, -25)
+	body.Position = UDim2.fromOffset(0, 25)
+	body.BackgroundTransparency = 1
+	body.BorderSizePixel = 0
+	body.ScrollBarThickness = 2
+	body.ScrollBarImageColor3 = T.accent
+	body.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	body.CanvasSize = UDim2.new()
+	body.ZIndex = 2
+	body.Parent = outer
+	pad(body, 10, 8, 10, 8)
+	local list = Instance.new("UIListLayout")
+	list.SortOrder = Enum.SortOrder.LayoutOrder
+	list.Padding = UDim.new(0, 6)
+	list.Parent = body
+	return body
+end
+
+-- Two side-by-side dropdowns row (photo: "ignore if | untarget if")
+local function buildDropdownRow(parent, leftOpts, rightOpts)
+	local row = Instance.new("Frame")
+	row.Size = UDim2.new(1, 0, 0, 38)
+	row.BackgroundTransparency = 1
+	row.ZIndex = (parent.ZIndex or 1) + 1
+	row.Parent = parent
+	local l = buildDropdown(row, leftOpts)
+	l.Size = UDim2.new(0.5, -3, 0, 38)
+	local r = buildDropdown(row, rightOpts)
+	r.Size = UDim2.new(0.5, -3, 0, 38)
+	r.Position = UDim2.new(0.5, 3, 0, 0)
+	return row
+end
+
+-- Listbox (accent scrollbar line at right like photos; selected bold accent)
+local function buildListbox(parent, opts)
+	local holder = Instance.new("Frame")
+	holder.Size = UDim2.new(1, 0, 0, opts.h + (opts.label and 16 or 0))
+	holder.BackgroundTransparency = 1
+	holder.ZIndex = (parent.ZIndex or 1) + 1
+	holder.Parent = parent
+	local y = 0
+	if opts.label then
+		local l = txt(holder, opts.label, 14, T.dim)
+		l.Size = UDim2.new(1, 0, 0, 12)
+		y = 16
+	end
+	local list = Instance.new("ScrollingFrame")
+	list.Size = UDim2.new(1, 0, 0, opts.h)
+	list.Position = UDim2.fromOffset(0, y)
+	list.BackgroundColor3 = T.inset
+	list.BorderSizePixel = 0
+	list.ScrollBarThickness = 0 -- wheel scrolls, bar invisible
+	list.ScrollingDirection = Enum.ScrollingDirection.Y
+	list.CanvasSize = UDim2.fromOffset(0, #opts.items * 17 + 8)
+	list.ZIndex = holder.ZIndex
+	list.Parent = holder
+	stroke(list)
+	local ll = Instance.new("UIListLayout")
+	ll.SortOrder = Enum.SortOrder.LayoutOrder
+	ll.Parent = list
+	pad(list, 8, 4)
+
+	local selected = opts.default
+	Flags[opts.flag] = selected
+	local buttons = {}
+	local function refresh()
+		for name, b in pairs(buttons) do
+			local sel = name == selected
+			b.TextColor3 = sel and T.accent or T.dim -- synced w/ accent
+			b.FontFace = sel and VERDANA_BOLD or VERDANA
+		end
+	end
+	table.insert(AccentUsers, refresh) -- live repaint when accent changes
+	for i, item in ipairs(opts.items) do
+		local b = Instance.new("TextButton")
+		b.Size = UDim2.new(1, -12, 0, 17)
+		b.BackgroundTransparency = 1
+		b.Text = item
+		b.TextSize = 14
+		b.FontFace = VERDANA
+		b.TextXAlignment = Enum.TextXAlignment.Left
+		b.LayoutOrder = i
+		b.ZIndex = list.ZIndex
+		b.Parent = list
+		buttons[item] = b
+		b.MouseButton1Click:Connect(function()
+			selected = item Flags[opts.flag] = item refresh()
+			if opts.callback then opts.callback(item) end
+		end)
+	end
+	FlagSetters[opts.flag] = function(v) selected = v refresh() end
+	refresh()
+	-- filter: only items STARTING with the query stay visible; "" restores
+	local function setFilter(q)
+		q = (q or ""):lower()
+		for name, b in pairs(buttons) do
+			b.Visible = q == "" or name:lower():sub(1, #q) == q
+		end
+	end
+	list.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	return holder, setFilter
+end
+
+-- Sub-tab strip inside a section (photo: "config | scripts", "menu | game",
+-- "Solid | Animations", "Main | Misc")
+function buildSubTabs(parent, names, onSelect)
+	-- reference style: light strip, active segment sinks darker w/ accent text
+	local strip = Instance.new("Frame")
+	strip.Size = UDim2.new(1, 0, 0, 20)
+	strip.BackgroundColor3 = T.element
+	strip.BorderSizePixel = 0
+	strip.ZIndex = (parent.ZIndex or 1) + 1
+	strip.Parent = parent
+	round(strip, 3)
+	stroke(strip, Color3.fromRGB(4, 4, 4))
+	local sg2 = Instance.new("UIGradient")
+	sg2.Color = ColorSequence.new(Color3.fromRGB(255, 255, 255), Color3.fromRGB(178, 178, 178))
+	sg2.Rotation = 90
+	sg2.Parent = strip
+	local btns = {}
+	local current
+	local function select(name)
+		current = name
+		for n, b in pairs(btns) do
+			local a = n == name
+			b.BackgroundTransparency = a and 0 or 1
+			b.TextColor3 = a and T.accent or T.dim -- synced w/ accent
+			b.FontFace = a and VERDANA_BOLD or VERDANA
+		end
+		if onSelect then onSelect(name) end
+	end
+	table.insert(AccentUsers, function()
+		for n, b in pairs(btns) do
+			if n == current then b.TextColor3 = T.accent end
+		end
+	end)
+	for i, name in ipairs(names) do
+		local b = Instance.new("TextButton")
+		b.Size = UDim2.new(1 / #names, 0, 1, 0)
+		b.Position = UDim2.new((i - 1) / #names, 0, 0, 0)
+		b.BackgroundColor3 = T.inset
+		b.BackgroundTransparency = 1
+		b.Text = name
+		b.TextSize = 14
+		b.FontFace = VERDANA
+		b.TextColor3 = T.dim
+		b.AutoButtonColor = false
+		b.BorderSizePixel = 0
+		b.ZIndex = strip.ZIndex
+		b.Parent = strip
+		round(b, 3)
+		btns[name] = b
+		b.MouseButton1Click:Connect(function() select(name) end)
+	end
+	select(names[1])
+	return strip, select
+end
+
+--========================================================================
+-- Sidebar sub-pages (bold name + dim desc, accent bar when selected)
+--========================================================================
+local sideLayout = Instance.new("UIListLayout")
+sideLayout.SortOrder = Enum.SortOrder.LayoutOrder
+sideLayout.Parent = sidebar
+
+local currentSideEntries = {}
+local function setSidebar(entries)
+	for _, e in ipairs(currentSideEntries) do e.btn:Destroy() end
+	currentSideEntries = {}
+
+	local function select(target)
+		for _, e in ipairs(currentSideEntries) do
+			local a = e == target
+			e.bar.Visible = a
+			e.nameLbl.TextColor3 = a and T.text or T.dim
+			e.descLbl.TextColor3 = a and T.dim or T.dim2
+			e.btn.BackgroundTransparency = a and 0.5 or 1
+			if e.frame then e.frame.Visible = a end
+		end
+	end
+
+	for i, def in ipairs(entries) do
+		local btn = Instance.new("TextButton")
+		btn.Size = UDim2.new(1, 0, 0, 40)
+		btn.BackgroundColor3 = Color3.fromRGB(32, 32, 32)
+		btn.BackgroundTransparency = 1
+		btn.Text = ""
+		btn.AutoButtonColor = false
+		btn.BorderSizePixel = 0
+		btn.LayoutOrder = i
+		btn.Parent = sidebar
+
+		local bar = Instance.new("Frame")
+		bar.Size = UDim2.new(0, 2, 1, -8)
+		bar.Position = UDim2.fromOffset(0, 4)
+		bar.BackgroundColor3 = T.accent
+		bar.BorderSizePixel = 0
+		bar.Visible = false
+		bar.Parent = btn
+		table.insert(AccentUsers, function() bar.BackgroundColor3 = T.accent end)
+
+		local nameLbl = txt(btn, def.name, 14, T.dim, true)
+		nameLbl.Size = UDim2.new(1, -18, 0, 14)
+		nameLbl.Position = UDim2.fromOffset(12, 6)
+		local descLbl = txt(btn, def.desc or "", 12, T.dim2)
+		descLbl.Size = UDim2.new(1, -18, 0, 12)
+		descLbl.Position = UDim2.fromOffset(12, 21)
+
+		local entry = { btn = btn, bar = bar, nameLbl = nameLbl, descLbl = descLbl, frame = def.frame }
+		entry.select = function() select(entry) end
+		table.insert(currentSideEntries, entry)
+		btn.MouseButton1Click:Connect(entry.select)
+	end
+	if currentSideEntries[1] then select(currentSideEntries[1]) end
+end
+
+--========================================================================
+-- Tabs / pages (bottom strip: icon over label, selected pill)
+--========================================================================
+local Pages, TabButtons = {}, {}
+local currentPage
+local function selectPage(name)
+	currentPage = name
+	for n, p in pairs(Pages) do p.frame.Visible = (n == name) end
+	for n, tb in pairs(TabButtons) do
+		local active = n == name
+		tb.pill.Visible = active
+		tb.icon.ImageColor3 = active and T.text or T.dim
+		tb.label.TextColor3 = active and T.text or T.dim
+		tb.label.FontFace = active and VERDANA_BOLD or VERDANA
+	end
+	setSidebar(Pages[name].side)
+	closePopup()
+end
+
+local tabOrder = 0
+local function addTab(name, iconName, sideEntries)
+	tabOrder += 1
+	local page = Instance.new("Frame")
+	page.Name = name .. "Page"
+	page.Size = UDim2.fromScale(1, 1)
+	page.BackgroundTransparency = 1
+	page.Visible = false
+	page.Parent = pageHolder
+	Pages[name] = { frame = page, side = sideEntries or { { name = name, desc = "hello" } } }
+
+	local btn = Instance.new("TextButton")
+	btn.Size = UDim2.fromOffset(74, 48)
+	btn.BackgroundTransparency = 1
+	btn.Text = ""
+	-- Settings always sits rightmost; user tabs slot in before it
+	btn.LayoutOrder = (name == "Settings") and 1000 or tabOrder
+	btn.Parent = tabHolder
+
+	local pill = Instance.new("Frame")
+	pill.Size = UDim2.new(1, 0, 1, 0)
+	pill.BackgroundColor3 = Color3.fromRGB(38, 38, 38)
+	pill.BorderSizePixel = 0
+	pill.Visible = false
+	pill.ZIndex = 1
+	pill.Parent = btn
+	round(pill, 6)
+
+	local ic = icon(btn, iconName, 15, T.dim)
+	ic.Position = UDim2.new(0.5, -8, 0, 7)
+	ic.ZIndex = 2
+	local lbl = txt(btn, name, 14, T.dim)
+	lbl.Size = UDim2.new(1, 0, 0, 14)
+	lbl.Position = UDim2.fromOffset(0, 26)
+	lbl.TextXAlignment = Enum.TextXAlignment.Center
+	lbl.ZIndex = 2
+
+	TabButtons[name] = { pill = pill, icon = ic, label = lbl }
+	btn.MouseButton1Click:Connect(function() selectPage(name) end)
+	return page
+end
+
+--========================================================================
+-- HUD
+--========================================================================
+local hud = Instance.new("Frame")
+hud.Size = UDim2.fromScale(1, 1)
+hud.BackgroundTransparency = 1
+hud.Parent = gui
+
+local function makeDraggable(frame)
+	local dragging, dragStart, startPos
+	frame.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 then
+			dragging, dragStart, startPos = true, input.Position, frame.Position
+			input.Changed:Connect(function()
+				if input.UserInputState == Enum.UserInputState.End then dragging = false end
+			end)
+		end
+	end)
+	UserInputService.InputChanged:Connect(function(input)
+		if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+			local d = input.Position - dragStart
+			frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X, startPos.Y.Scale, startPos.Y.Offset + d.Y)
+		end
+	end)
+end
+
+-- Watermark: square, thick accent top line, "symbol | 32vision" style text
+local watermark = Instance.new("Frame")
+watermark.Size = UDim2.fromOffset(180, 22)
+watermark.Position = UDim2.fromOffset(16, 12)
+watermark.BackgroundColor3 = T.strip
+watermark.BorderSizePixel = 0
+watermark.Parent = hud
+stroke(watermark)
+local wmAccent = Instance.new("Frame")
+wmAccent.Size = UDim2.new(1, 0, 0, 3)
+wmAccent.BackgroundColor3 = T.accent
+wmAccent.BorderSizePixel = 0
+wmAccent.Parent = watermark
+table.insert(AccentUsers, function() wmAccent.BackgroundColor3 = T.accent end)
+local wmText = txt(watermark, "", 14, T.text)
+wmText.RichText = true
+wmText.Text = brandRich() .. " | 32vision"
+wmText.Size = UDim2.new(1, -16, 1, -3)
+wmText.Position = UDim2.fromOffset(8, 3)
+makeDraggable(watermark)
+
+-- Keybind list: square, "keybinds" header with accent underline (photo)
+local keybindList = Instance.new("Frame")
+keybindList.Size = UDim2.fromOffset(180, 24)
+keybindList.AutomaticSize = Enum.AutomaticSize.Y
+keybindList.Position = UDim2.fromOffset(16, 220)
+keybindList.BackgroundColor3 = T.strip
+keybindList.BorderSizePixel = 0
+keybindList.Visible = false
+keybindList.Parent = hud
+stroke(keybindList)
+local kbHeader = Instance.new("Frame")
+kbHeader.Size = UDim2.new(1, 0, 0, 20)
+kbHeader.BackgroundColor3 = T.element
+kbHeader.BorderSizePixel = 0
+kbHeader.Parent = keybindList
+local kbLine = Instance.new("Frame")
+kbLine.Size = UDim2.new(1, -6, 0, 1)
+kbLine.Position = UDim2.new(0, 3, 1, -1)
+kbLine.BackgroundColor3 = T.accent
+kbLine.BorderSizePixel = 0
+kbLine.Parent = kbHeader
+table.insert(AccentUsers, function() kbLine.BackgroundColor3 = T.accent end)
+local kbTitle = txt(kbHeader, "keybinds", 14, T.text)
+kbTitle.Size = UDim2.fromScale(1, 1)
+kbTitle.TextXAlignment = Enum.TextXAlignment.Center
+local kbBody = Instance.new("Frame")
+kbBody.Size = UDim2.new(1, 0, 0, 0)
+kbBody.AutomaticSize = Enum.AutomaticSize.Y
+kbBody.Position = UDim2.fromOffset(0, 20)
+kbBody.BackgroundTransparency = 1
+kbBody.Parent = keybindList
+pad(kbBody, 8, 3, 8, 5)
+local kbLayout = Instance.new("UIListLayout")
+kbLayout.SortOrder = Enum.SortOrder.LayoutOrder
+kbLayout.Padding = UDim.new(0, 2)
+kbLayout.Parent = kbBody
+makeDraggable(keybindList)
+
+local kbRows = {}
+task.spawn(function()
+	while true do
+		task.wait(0.1)
+		if keybindList.Visible then
+			for _, e in ipairs(Keybinds) do
+				local row = kbRows[e]
+				local mode = Flags[e.flag .. "_mode"] or "Toggle"
+				local active = (mode == "Always") or e.active
+				local show = e.key ~= "NONE" and Flags[e.flag .. "_show"] ~= false
+				if show and not row then
+					local f = Instance.new("Frame")
+					f.Size = UDim2.new(1, 0, 0, 13)
+					f.BackgroundTransparency = 1
+					f.Parent = kbBody
+					local n = txt(f, e.name, 12, T.dim)
+					n.Size = UDim2.new(1, -60, 1, 0)
+					local k = txt(f, "", 12, T.accent)
+					k.Size = UDim2.fromOffset(60, 13)
+					k.Position = UDim2.new(1, -60, 0, 0)
+					k.TextXAlignment = Enum.TextXAlignment.Right
+					row = { frame = f, name = n, key = k }
+					kbRows[e] = row
+				end
+				if row then
+					row.frame.Visible = show
+					row.key.Text = "[" .. e.key .. "]"
+					row.key.TextColor3 = active and T.accent or T.dim
+					row.name.TextColor3 = active and T.text or T.dim
+				end
+			end
+		end
+	end
+end)
+
+-- watermark info
+local fps, frames, acc = 60, 0, 0
+RunService.RenderStepped:Connect(function(dt)
+	frames += 1 acc += dt
+	if acc >= 0.5 then fps = math.round(frames / acc) frames, acc = 0, 0 end
+end)
+task.spawn(function()
+	while true do
+		task.wait(0.5)
+		if watermark.Visible then
+			local info = Flags.watermark_info or {}
+			local parts = { brandRich() }
+			local function has(x) return table.find(info, x) ~= nil end
+			if has("FPS") then table.insert(parts, fps .. " fps") end
+			if has("Time") then table.insert(parts, os.date("%H:%M:%S")) end
+			if has("Date") then table.insert(parts, os.date("%d/%m/%y")) end
+			if has("Username") then table.insert(parts, player.Name) end
+			if has("Display Name") then table.insert(parts, player.DisplayName) end
+			wmText.Text = table.concat(parts, " | ")
+			watermark.Size = UDim2.fromOffset(math.max(80, wmText.TextBounds.X + 16), 22)
+		end
+	end
+end)
+
+-- Menu open/close: instant toggle (no fade). Debounced — duplicate key
+-- events in one frame were re-opening the menu instead of closing it.
+local lastMenuToggle = 0
+local function toggleMenu()
+	if os.clock() - lastMenuToggle < 0.2 then return end
+	lastMenuToggle = os.clock()
+	main.Visible = not main.Visible
+	if not main.Visible then closePopup() end
+end
+
+-- Notifications: TOP CENTER stack, quick fade in/out, accent line slides
+-- across the bar as the duration runs down
+local notifyHolder = Instance.new("Frame")
+notifyHolder.AnchorPoint = Vector2.new(0.5, 0)
+notifyHolder.Size = UDim2.fromOffset(320, 300)
+notifyHolder.Position = UDim2.new(0.5, 0, 0, 14)
+notifyHolder.BackgroundTransparency = 1
+notifyHolder.Parent = hud
+local notifyLayout = Instance.new("UIListLayout")
+notifyLayout.SortOrder = Enum.SortOrder.LayoutOrder
+notifyLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+notifyLayout.VerticalAlignment = Enum.VerticalAlignment.Top
+notifyLayout.Padding = UDim.new(0, 4)
+notifyLayout.Parent = notifyHolder
+
+local NotifyColors = {
+	normal  = nil, -- follows the (possibly animating) accent color live
+	warning = Color3.fromRGB(235, 190, 60),
+	error   = Color3.fromRGB(225, 60, 60),
+	risky   = Color3.fromRGB(235, 130, 40),
+}
+local notifOrder = 0
+local function notify(message, dur, ntype)
+	dur = dur or 3
+	ntype = NotifyColors[ntype] and ntype or "normal"
+	notifOrder += 1
+	local n = Instance.new("Frame")
+	n.Size = UDim2.fromOffset(0, 22)
+	n.AutomaticSize = Enum.AutomaticSize.X
+	n.BackgroundColor3 = T.strip
+	n.BackgroundTransparency = 1
+	n.BorderSizePixel = 0
+	n.LayoutOrder = notifOrder
+	n.Parent = notifyHolder
+	local nStroke = stroke(n, Color3.fromRGB(4, 4, 4))
+	nStroke.Transparency = 1
+	local topLine = Instance.new("Frame") -- animated slide line
+	topLine.Size = UDim2.new(1, 0, 0, 2)
+	topLine.BackgroundColor3 = NotifyColors[ntype] or T.accent
+	topLine.BackgroundTransparency = 1
+	topLine.BorderSizePixel = 0
+	topLine.Parent = n
+	if ntype == "normal" then -- track the live accent (incl. animations)
+		task.spawn(function()
+			while topLine.Parent do
+				topLine.BackgroundColor3 = T.accent
+				task.wait(1 / 20)
+			end
+		end)
+	end
+	local t = txt(n, message, 14, T.text)
+	t.TextTransparency = 1
+	t.Size = UDim2.fromOffset(0, 22)
+	t.AutomaticSize = Enum.AutomaticSize.X
+	t.Position = UDim2.fromOffset(8, 0)
+	local padR = Instance.new("UIPadding")
+	padR.PaddingRight = UDim.new(0, 16)
+	padR.Parent = n
+
+	local fadeIn, fadeOut = 0.35, 0.35
+	local tiIn  = TweenInfo.new(fadeIn,  Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+	local tiOut = TweenInfo.new(fadeOut, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+
+	-- fade in
+	TweenService:Create(n, tiIn, { BackgroundTransparency = 0 }):Play()
+	TweenService:Create(nStroke, tiIn, { Transparency = 0 }):Play()
+	TweenService:Create(topLine, tiIn, { BackgroundTransparency = 0 }):Play()
+	TweenService:Create(t, tiIn, { TextTransparency = 0 }):Play()
+
+	-- line slides from full width down to nothing over the duration
+	task.delay(fadeIn, function()
+		if n.Parent then
+			TweenService:Create(topLine, TweenInfo.new(dur, Enum.EasingStyle.Linear),
+				{ Size = UDim2.new(0, 0, 0, 2) }):Play()
+		end
+	end)
+
+	-- fade out then remove
+	task.delay(fadeIn + dur, function()
+		if not n.Parent then return end
+		TweenService:Create(n, tiOut, { BackgroundTransparency = 1 }):Play()
+		TweenService:Create(nStroke, tiOut, { Transparency = 1 }):Play()
+		TweenService:Create(topLine, tiOut, { BackgroundTransparency = 1 }):Play()
+		TweenService:Create(t, tiOut, { TextTransparency = 1 }):Play()
+		task.delay(fadeOut, function() if n.Parent then n:Destroy() end end)
+	end)
+end
+
+--========================================================================
+-- Color ANIMATIONS engine — drives every swatch whose picker Mode isn't
+-- Solid: Rainbow / Fading / Strobe / Tween (with easing), using the two
+-- Animation colors and Speed % from the picker
+--========================================================================
+task.spawn(function()
+	while true do
+		task.wait(1 / 30)
+		for _, flag in ipairs(AnimColorFlags) do
+			local mode = Flags[flag .. "_mode"]
+			if mode and mode ~= "Solid" then
+				local speed = (Flags[flag .. "_speed"] or 50) / 50 -- 50% = 1x
+				local c1 = Flags[flag .. "_anim1"] or Color3.fromRGB(255, 0, 0)
+				local c2 = Flags[flag .. "_anim2"] or Color3.fromRGB(235, 235, 235)
+				local t = os.clock() * speed
+				local c
+				if mode == "Rainbow" then
+					c = Color3.fromHSV((t * 0.25) % 1, 1, 1)
+				elseif mode == "Fading" then
+					c = c1:Lerp(c2, (math.sin(t * math.pi) + 1) / 2)
+				elseif mode == "Strobe" then
+					c = (math.floor(t * 2) % 2 == 0) and c1 or c2
+				elseif mode == "Tween" then
+					local p = t % 2
+					local alpha = p < 1 and p or 2 - p -- ping-pong
+					local okS, style = pcall(function() return Enum.EasingStyle[Flags[flag .. "_ease_style"] or "Quad"] end)
+					local okD, dir = pcall(function() return Enum.EasingDirection[Flags[flag .. "_ease_dir"] or "InOut"] end)
+					if okS and okD then alpha = TweenService:GetValue(alpha, style, dir) end
+					c = c1:Lerp(c2, alpha)
+				end
+				if c then
+					Flags[flag] = c
+					if FlagSetters[flag] then FlagSetters[flag](c) end
+				end
+			end
+		end
+	end
+end)
+
+--========================================================================
+-- Keystrokes HUD (reference: header + W over A S D, lit while held)
+--========================================================================
+local KS = { -- themable keystroke colors
+	bg      = Color3.fromRGB(21, 21, 21),
+	key     = Color3.fromRGB(36, 36, 36),
+	text    = Color3.fromRGB(235, 235, 235),
+	outline = Color3.fromRGB(4, 4, 4),
+}
+local keystrokes = Instance.new("Frame")
+keystrokes.Size = UDim2.fromOffset(110, 96)
+keystrokes.Position = UDim2.fromOffset(16, 260)
+keystrokes.BackgroundColor3 = KS.bg
+keystrokes.BorderSizePixel = 0
+keystrokes.Visible = false
+keystrokes.Parent = hud
+stroke(keystrokes, KS.outline)
+local ksHeader = txt(keystrokes, "keystrokes", 12, KS.text)
+ksHeader.Size = UDim2.new(1, 0, 0, 16)
+ksHeader.TextXAlignment = Enum.TextXAlignment.Center
+local ksLine = hline(keystrokes, 16, T.accent) -- line under the header text
+table.insert(AccentUsers, function() ksLine.BackgroundColor3 = T.accent end)
+local ksKeys = {}
+local function ksKey(label, keyCode, x, y)
+	local k = Instance.new("Frame")
+	k.Size = UDim2.fromOffset(30, 30)
+	k.Position = UDim2.fromOffset(x, y)
+	k.BackgroundColor3 = KS.key
+	k.BorderSizePixel = 0
+	k.Parent = keystrokes
+	round(k, 3)
+	stroke(k, KS.outline)
+	local l = txt(k, label, 14, KS.text)
+	l.Size = UDim2.fromScale(1, 1)
+	l.TextXAlignment = Enum.TextXAlignment.Center
+	ksKeys[keyCode] = { frame = k, label = l }
+	return k
+end
+ksKey("W", Enum.KeyCode.W, 40, 24)
+ksKey("A", Enum.KeyCode.A, 6, 58)
+ksKey("S", Enum.KeyCode.S, 40, 58)
+ksKey("D", Enum.KeyCode.D, 74, 58)
+makeDraggable(keystrokes)
+UserInputService.InputBegan:Connect(function(input)
+	local k = ksKeys[input.KeyCode]
+	if k then
+		k.frame.BackgroundColor3 = T.accent
+		k.label.TextColor3 = Color3.new(1, 1, 1)
+	end
+end)
+UserInputService.InputEnded:Connect(function(input)
+	local k = ksKeys[input.KeyCode]
+	if k then
+		k.frame.BackgroundColor3 = KS.key
+		k.label.TextColor3 = KS.text
+	end
+end)
+
+--========================================================================
+-- Motion graph HUD — plots your movement speed. Empty when standing
+-- still, fills as you move. Methods: lines (bars), dots, waves.
+--========================================================================
+local motionGraph = Instance.new("Frame")
+motionGraph.Size = UDim2.fromOffset(160, 70)
+motionGraph.Position = UDim2.fromOffset(140, 260)
+motionGraph.BackgroundColor3 = T.strip
+motionGraph.BorderSizePixel = 0
+motionGraph.Visible = false
+motionGraph.Parent = hud
+stroke(motionGraph, Color3.fromRGB(4, 4, 4))
+local mgHeader = txt(motionGraph, "motion graph", 12, T.text)
+mgHeader.Size = UDim2.new(1, 0, 0, 16)
+mgHeader.TextXAlignment = Enum.TextXAlignment.Center
+local mgLine = hline(motionGraph, 16, T.accent)
+table.insert(AccentUsers, function() mgLine.BackgroundColor3 = T.accent end)
+local mgBody = Instance.new("Frame")
+mgBody.Size = UDim2.new(1, -8, 1, -22)
+mgBody.Position = UDim2.fromOffset(4, 19)
+mgBody.BackgroundTransparency = 1
+mgBody.ClipsDescendants = true
+mgBody.Parent = motionGraph
+makeDraggable(motionGraph)
+
+Flags.motion_mode = "lines"
+Flags.motion_scale = 1
+
+local MG_SAMPLES = 52
+local mgHistory, mgBars = {}, {}
+for i = 1, MG_SAMPLES do
+	mgHistory[i] = 0
+	local b = Instance.new("Frame")
+	b.BackgroundColor3 = T.accent
+	b.BorderSizePixel = 0
+	b.Parent = mgBody
+	mgBars[i] = b
+	table.insert(AccentUsers, function() b.BackgroundColor3 = T.accent end)
+end
+
+task.spawn(function()
+	while true do
+		task.wait(1 / 20)
+		if motionGraph.Visible then
+			-- sample current speed (ratio of walkspeed, scaled)
+			local speed = 0
+			local ch = player.Character
+			local root = ch and ch:FindFirstChild("HumanoidRootPart")
+			local humObj = ch and ch:FindFirstChildOfClass("Humanoid")
+			if root and humObj then
+				local vel = root.AssemblyLinearVelocity
+				speed = Vector2.new(vel.X, vel.Z).Magnitude / math.max(humObj.WalkSpeed, 1)
+			end
+			speed = math.clamp(speed * (Flags.motion_scale or 1), 0, 1)
+			table.remove(mgHistory, 1)
+			table.insert(mgHistory, speed)
+
+			local mode = Flags.motion_mode or "lines"
+			local W, H = mgBody.AbsoluteSize.X, mgBody.AbsoluteSize.Y
+			local slotW = W / MG_SAMPLES
+			for i, b in ipairs(mgBars) do
+				local v = mgHistory[i]
+				local x = (i - 1) * slotW
+				if mode ~= "waves" then -- undo wave segment transforms
+					b.Rotation = 0
+					b.AnchorPoint = Vector2.new(0, 0)
+				end
+				if mode == "lines" then
+					-- filled bars from the bottom (empty when idle)
+					local hgt = math.floor(v * (H - 2))
+					b.Visible = hgt > 0
+					b.Size = UDim2.fromOffset(math.ceil(slotW), hgt)
+					b.Position = UDim2.new(0, x, 1, -hgt)
+				elseif mode == "dots" then
+					-- a dot at the value height (flat row of dots when idle)
+					b.Visible = true
+					b.Size = UDim2.fromOffset(2, 2)
+					b.Position = UDim2.new(0, x, 1, -2 - math.floor(v * (H - 4)))
+				else -- waves: a proper connected line — each bar is a thin
+					-- ROTATED segment joining the previous point to this one
+					b.Visible = true
+					local prev = mgHistory[i - 1] or v
+					local x1, y1 = (i - 1.5) * slotW, H - 2 - prev * (H - 4)
+					local x2, y2 = (i - 0.5) * slotW, H - 2 - v * (H - 4)
+					local dx, dy = x2 - x1, y2 - y1
+					b.AnchorPoint = Vector2.new(0.5, 0.5)
+					b.Size = UDim2.fromOffset(math.sqrt(dx * dx + dy * dy) + 1, 2)
+					b.Position = UDim2.fromOffset((x1 + x2) / 2, (y1 + y2) / 2)
+					b.Rotation = math.deg(math.atan2(dy, dx))
+				end
+			end
+		end
+	end
+end)
+
+--========================================================================
+-- Page frame helper (sub-page container inside a page)
+--========================================================================
+local function subFrame(page, visible)
+	local f = Instance.new("Frame")
+	f.Size = UDim2.fromScale(1, 1)
+	f.BackgroundTransparency = 1
+	f.Visible = visible or false
+	f.Parent = page
+	return f
+end
+
+--========================================================================
+-- Build tabs (order per photos: Rage, Legit, Visuals, Skins, Waypoints, Shop, Misc)
+--========================================================================
+-- the library only ships a Settings tab; build your own tabs through
+-- the returned API (see symboluiexample.lua)
+local miscPage = addTab("Settings", "settings")
+
+--========================================================================
+-- THEME engine — every entry from the reference list, live-applied by
+-- swapping the old color for the new one across the whole gui
+--========================================================================
+local themesFolder = baseFolder .. '/Themes'
+local scriptsFolder = baseFolder .. '/Scripts'
+pcall(function()
+	if not isfolder(themesFolder) then makefolder(themesFolder) end
+	if not isfolder(scriptsFolder) then makefolder(scriptsFolder) end
+end)
+
+local ThemeDefs = {
+	{ "Outline",                Color3.fromRGB(4, 4, 4) },
+	{ "SelectedMultiTabText",   T.accent2 },
+	{ "Radar Background",       Color3.fromRGB(12, 12, 12) },
+	{ "Element Text",           T.text },
+	{ "PageBackground",         T.bg },
+	{ "Sidebar",                T.side },
+	{ "Inlines",                T.inset },
+	{ "Background1",            T.section },
+	{ "Keystrokes Outline",     KS.outline },
+	{ "Keystrokes Text",        KS.text },
+	{ "Keystrokes Key",         KS.key },
+	{ "Keystrokes Background",  KS.bg },
+	{ "Backpack Slot",          Color3.fromRGB(30, 30, 30) },
+	{ "Backpack Background",    Color3.fromRGB(18, 18, 18) },
+	{ "Speed Graph Background", Color3.fromRGB(15, 15, 15) },
+	{ "UnselectedIcon",         T.dim },
+	{ "UnselectedElement",      T.element },
+	{ "Watermark Background",   T.strip },
+}
+local ThemeVals, ThemeDefaults = {}, {}
+for _, d in ipairs(ThemeDefs) do ThemeVals[d[1]] = d[2] ThemeDefaults[d[1]] = d[2] end
+
+-- keep the shared palette in sync so newly created elements match too
+local ThemeTargets = {
+	["Element Text"] = { T, "text" },   ["PageBackground"] = { T, "bg" },
+	["Sidebar"] = { T, "side" },        ["Inlines"] = { T, "inset" },
+	["Background1"] = { T, "section" }, ["UnselectedIcon"] = { T, "dim" },
+	["UnselectedElement"] = { T, "element" }, ["Watermark Background"] = { T, "strip" },
+	["SelectedMultiTabText"] = { T, "accent2" },
+	["Keystrokes Outline"] = { KS, "outline" }, ["Keystrokes Text"] = { KS, "text" },
+	["Keystrokes Key"] = { KS, "key" },         ["Keystrokes Background"] = { KS, "bg" },
+}
+
+-- throttled: dragging in a picker calls this every frame, and a full
+-- gui walk per frame tanked the framerate — apply at most ~6x/sec
+local themePending, themeBusy = {}, false
+local applyThemeColorNow
+local function applyThemeColor(name, c)
+	themePending[name] = c
+	if themeBusy then return end
+	themeBusy = true
+	task.spawn(function()
+		while next(themePending) do
+			local n, col = next(themePending)
+			themePending[n] = nil
+			applyThemeColorNow(n, col)
+			task.wait(0.15)
+		end
+		themeBusy = false
+	end)
+end
+
+function applyThemeColorNow(name, c)
+	local old = ThemeVals[name]
+	if not old or old == c then ThemeVals[name] = c return end
+	for _, o in ipairs(gui:GetDescendants()) do
+		pcall(function()
+			-- color swatches / picker internals keep their own colors
+			if o:GetAttribute("ThemeExempt") or (o.Parent and o.Parent:GetAttribute("ThemeExempt")) then return end
+			if o:IsA("GuiObject") and o.BackgroundColor3 == old then o.BackgroundColor3 = c end
+			if (o:IsA("TextLabel") or o:IsA("TextButton") or o:IsA("TextBox")) and o.TextColor3 == old then o.TextColor3 = c end
+			if (o:IsA("ImageLabel") or o:IsA("ImageButton")) and o.ImageColor3 == old then o.ImageColor3 = c end
+			if o:IsA("UIStroke") and o.Color == old then o.Color = c end
+		end)
+	end
+	local tgt = ThemeTargets[name]
+	if tgt then tgt[1][tgt[2]] = c end
+	ThemeVals[name] = c
+	if FlagSetters["theme_" .. name] then FlagSetters["theme_" .. name](c) end
+end
+
+local function saveTheme(tname)
+	local out = {}
+	for n, c in pairs(ThemeVals) do out[n] = { c.R, c.G, c.B } end
+	writefile(themesFolder .. '/' .. tname .. '.json', HttpService:JSONEncode(out))
+end
+local function loadTheme(tname)
+	local path = themesFolder .. '/' .. tname .. '.json'
+	if not isfile(path) then return false end
+	local ok, data = pcall(function() return HttpService:JSONDecode(readfile(path)) end)
+	if not ok then return false end
+	for n, v in pairs(data) do
+		if ThemeVals[n] then applyThemeColor(n, Color3.new(v[1], v[2], v[3])) end
+	end
+	return true
+end
+local function listFilesIn(folder, ext)
+	local out = {}
+	pcall(function()
+		for _, f in ipairs(listfiles(folder)) do
+			local n = f:match("([^/\\]+)%." .. ext .. "$")
+			if n then table.insert(out, n) end
+		end
+	end)
+	return out
+end
+
+--========================================================================
+-- PAGE: Settings — Title(config|scripts) / theme(setting|config) / Title(menu|game)
+--========================================================================
+do
+	local miscMain = subFrame(miscPage, true)
+	Pages.Settings.side = {
+		{ name = "main", desc = "hello", frame = miscMain },
+	}
+
+	-- tab-page container (children of a section body, toggled by sub tabs)
+	local function tabPage(parent, visible)
+		local f = Instance.new("Frame")
+		f.Size = UDim2.new(1, 0, 0, 0)
+		f.AutomaticSize = Enum.AutomaticSize.Y
+		f.BackgroundTransparency = 1
+		f.Visible = visible or false
+		f.ZIndex = parent.ZIndex
+		f.Parent = parent
+		local ll = Instance.new("UIListLayout")
+		ll.SortOrder = Enum.SortOrder.LayoutOrder
+		ll.Padding = UDim.new(0, 6)
+		ll.Parent = f
+		return f
+	end
+
+	-- ================= Title (config | scripts) =================
+	local cfgSec = buildSection(miscMain, { title = "Title", x = 12, w = 232, h = 490, y = 10 })
+	local cfgPage, scrPage
+	buildSubTabs(cfgSec, { "config", "scripts" }, function(n)
+		if cfgPage then cfgPage.Visible = n == "config" end
+		if scrPage then scrPage.Visible = n == "scripts" end
+	end)
+	cfgPage = tabPage(cfgSec, true)
+	scrPage = tabPage(cfgSec)
+
+	-- config tab (fully functional against Avenir.CC/Configs)
+	local cfgListHolder
+	local function refreshConfigList()
+		if cfgListHolder then cfgListHolder:Destroy() end
+		local itemsList = listConfigs()
+		if #itemsList == 0 then itemsList = { "(none)" } end
+		cfgListHolder = buildListbox(cfgPage, { flag = "cfg_selected", h = 150,
+			default = Flags.cfg_selected, items = itemsList })
+		cfgListHolder.LayoutOrder = 1
+	end
+	refreshConfigList()
+	local cfgBoxH, cfgBox = buildTextbox(cfgPage, { label = "config name", placeholder = "Type config name..." })
+	cfgBoxH.LayoutOrder = 2
+	local function selName() return cfgBox.Text ~= "" and cfgBox.Text or Flags.cfg_selected end
+	buildButtonPair(cfgPage,
+		{ text = "save", callback = function()
+			local n = selName()
+			if n and n ~= "(none)" then saveConfig(n) notify("saved config: " .. n) refreshConfigList() end
+		end },
+		{ text = "load", callback = function()
+			local n = selName()
+			if n and n ~= "(none)" then loadConfig(n) notify("loaded config: " .. n) end
+		end }).LayoutOrder = 3
+	buildButtonPair(cfgPage,
+		{ text = "delete", callback = function()
+			local n = Flags.cfg_selected
+			if n and n ~= "(none)" then
+				pcall(function() delfile(configFolder .. '/' .. n .. '.json') end)
+				notify("deleted config: " .. n)
+				refreshConfigList()
+			end
+		end },
+		{ text = "refresh", callback = refreshConfigList }).LayoutOrder = 4
+	-- code... | import  +  export code
+	local codeRow = Instance.new("Frame")
+	codeRow.Size = UDim2.new(1, 0, 0, 22)
+	codeRow.BackgroundTransparency = 1
+	codeRow.ZIndex = cfgPage.ZIndex + 1
+	codeRow.LayoutOrder = 5
+	codeRow.Parent = cfgPage
+	local codeBox = Instance.new("TextBox")
+	codeBox.Size = UDim2.new(0.5, -3, 1, 0)
+	codeBox.PlaceholderText = "code..."
+	codeBox.PlaceholderColor3 = T.dim
+	codeBox.Text = "" codeBox.TextSize = 14 codeBox.FontFace = VERDANA codeBox.TextColor3 = T.text
+	codeBox.TextXAlignment = Enum.TextXAlignment.Left
+	codeBox.ClearTextOnFocus = false
+	codeBox.ZIndex = codeRow.ZIndex codeBox.Parent = codeRow styleElement(codeBox) pad(codeBox, 6, 0)
+	local importBtn = Instance.new("TextButton")
+	importBtn.Size = UDim2.new(0.5, -3, 1, 0)
+	importBtn.Position = UDim2.new(0.5, 3, 0, 0)
+	importBtn.Text = "import" importBtn.TextSize = 14 importBtn.FontFace = VERDANA importBtn.TextColor3 = T.text
+	importBtn.AutoButtonColor = false importBtn.BorderSizePixel = 0
+	importBtn.ZIndex = codeRow.ZIndex importBtn.Parent = codeRow styleElement(importBtn, true)
+	importBtn.MouseButton1Click:Connect(function()
+		local ok = pcall(function()
+			local data = HttpService:JSONDecode(codeBox.Text ~= "" and codeBox.Text or tostring(getclipboard()))
+			for k, v in pairs(data) do
+				if type(v) == "table" and v.__c3 then v = Color3.new(v.r or v[1] or 0, v.g or v[2] or 0, v.b or v[3] or 0) end
+				Flags[k] = v
+				if FlagSetters[k] then pcall(FlagSetters[k], v) end
+			end
+		end)
+		notify(ok and "imported config" or "import failed: bad code")
+	end)
+	buildActionButton(cfgPage, { text = "export code", callback = function()
+		local out = {}
+		for k, v in pairs(Flags) do
+			if typeof(v) == "Color3" then out[k] = { __c3 = true, r = v.R, g = v.G, b = v.B } else out[k] = v end
+		end
+		pcall(function() setclipboard(HttpService:JSONEncode(out)) end)
+		notify("exported config to clipboard")
+	end }).LayoutOrder = 6
+	buildToggle(cfgPage, { flag = "cfg_auto_save", text = "auto save", gear = function(pop)
+		buildSlider(pop, { flag = "cfg_auto_save_int", text = "interval", min = 10, max = 300, step = 10, default = 60, suffix = "s" })
+	end }).LayoutOrder = 7
+	task.spawn(function() -- auto save loop
+		while true do
+			task.wait(math.clamp(Flags.cfg_auto_save_int or 60, 10, 300))
+			if Flags.cfg_auto_save and Flags.cfg_selected and Flags.cfg_selected ~= "(none)" then
+				saveConfig(Flags.cfg_selected)
+			end
+		end
+	end)
+
+	-- scripts tab (files in Avenir.CC/Scripts: list / load / unload / delete)
+	local scrListHolder
+	local function refreshScriptList()
+		if scrListHolder then scrListHolder:Destroy() end
+		local items = listFilesIn(scriptsFolder, "lua")
+		for _, n in ipairs(listFilesIn(scriptsFolder, "txt")) do table.insert(items, n) end
+		if #items == 0 then items = { "(none)" } end
+		scrListHolder = buildListbox(scrPage, { flag = "scr_selected", h = 190,
+			default = Flags.scr_selected, items = items })
+		scrListHolder.LayoutOrder = 1
+	end
+	refreshScriptList()
+	local scrBoxH = buildTextbox(scrPage, { label = "script name", placeholder = "Type config name..." })
+	scrBoxH.LayoutOrder = 2
+	local function scriptPath(n)
+		if isfile(scriptsFolder .. '/' .. n .. '.lua') then return scriptsFolder .. '/' .. n .. '.lua' end
+		if isfile(scriptsFolder .. '/' .. n .. '.txt') then return scriptsFolder .. '/' .. n .. '.txt' end
+	end
+	buildButtonPair(scrPage,
+		{ text = "load", callback = function()
+			local n = Flags.scr_selected
+			local p = n and n ~= "(none)" and scriptPath(n)
+			if p then
+				local ok = pcall(function() loadstring(readfile(p))() end)
+				notify(ok and ("loaded script: " .. n) or ("script error: " .. n))
+			end
+		end },
+		{ text = "unload", callback = function() notify("unload requested") end }).LayoutOrder = 3
+	buildButtonPair(scrPage,
+		{ text = "delete", callback = function()
+			local n = Flags.scr_selected
+			local p = n and n ~= "(none)" and scriptPath(n)
+			if p then pcall(function() delfile(p) end) notify("deleted script: " .. n) refreshScriptList() end
+		end },
+		{ text = "refresh", callback = refreshScriptList }).LayoutOrder = 4
+
+	-- ================= theme (setting | config) =================
+	local themeSec = buildSection(miscMain, { title = "theme", x = 252, w = 232, h = 490, y = 10 })
+	local setPage, colPage
+	buildSubTabs(themeSec, { "setting", "config" }, function(n)
+		if setPage then setPage.Visible = n == "setting" end
+		if colPage then colPage.Visible = n == "config" end
+	end)
+	setPage = tabPage(themeSec, true)
+	colPage = tabPage(themeSec)
+
+	-- setting tab: save/load themes to Avenir.CC/Themes
+	local themeListHolder
+	local function refreshThemeList()
+		if themeListHolder then themeListHolder:Destroy() end
+		local items = listFilesIn(themesFolder, "json")
+		if #items == 0 then items = { "(none)" } end
+		themeListHolder = buildListbox(setPage, { flag = "theme_selected", h = 150,
+			default = Flags.theme_selected, items = items })
+		themeListHolder.LayoutOrder = 1
+	end
+	refreshThemeList()
+	local themeBoxH, themeBox = buildTextbox(setPage, { label = "theme name", placeholder = "Type theme name..." })
+	themeBoxH.LayoutOrder = 2
+	local function themeName() return themeBox.Text ~= "" and themeBox.Text or Flags.theme_selected end
+	buildButtonPair(setPage,
+		{ text = "save", callback = function()
+			local n = themeName()
+			if n and n ~= "(none)" then saveTheme(n) notify("saved theme: " .. n) refreshThemeList() end
+		end },
+		{ text = "load", callback = function()
+			local n = themeName()
+			if n and n ~= "(none)" and loadTheme(n) then notify("loaded theme: " .. n)
+			else notify("theme not found") end
+		end }).LayoutOrder = 3
+	buildButtonPair(setPage,
+		{ text = "delete", callback = function()
+			local n = Flags.theme_selected
+			if n and n ~= "(none)" then
+				pcall(function() delfile(themesFolder .. '/' .. n .. '.json') end)
+				notify("deleted theme: " .. n)
+				refreshThemeList()
+			end
+		end },
+		{ text = "refresh", callback = refreshThemeList }).LayoutOrder = 4
+	local themeCur = nil
+	local setAutoT = buildActionButton(setPage, { text = "set auto load", callback = function()
+		local n = Flags.theme_selected
+		if n and n ~= "(none)" then
+			pcall(function() writefile(baseFolder .. '/theme_autoload.txt', n) end)
+			if themeCur then themeCur.Text = "current: " .. n end
+			notify("theme auto load: " .. n)
+		end
+	end })
+	setAutoT.LayoutOrder = 5
+	themeCur = txt(setPage, "current: None", 14, T.dim)
+	themeCur.Size = UDim2.new(1, 0, 0, 13)
+	themeCur.LayoutOrder = 6
+	pcall(function()
+		if isfile(baseFolder .. '/theme_autoload.txt') then
+			themeCur.Text = "current: " .. readfile(baseFolder .. '/theme_autoload.txt')
+		end
+	end)
+	buildActionButton(setPage, { text = "remove auto load", callback = function()
+		pcall(function() delfile(baseFolder .. '/theme_autoload.txt') end)
+		themeCur.Text = "current: None"
+		notify("theme auto load removed")
+	end }).LayoutOrder = 7
+
+	-- config tab: every theme color from the reference, swatch = live picker
+	for i, d in ipairs(ThemeDefs) do
+		local name, def = d[1], d[2]
+		local tflag = "theme_" .. name
+		Flags[tflag] = ThemeVals[name]
+		local row = Instance.new("Frame")
+		row.Size = UDim2.new(1, 0, 0, 16)
+		row.BackgroundTransparency = 1
+		row.ZIndex = colPage.ZIndex + 1
+		row.LayoutOrder = i
+		row.Parent = colPage
+		local l = txt(row, name, 14, T.dim)
+		l.Size = UDim2.new(1, -30, 1, 0)
+		local sw = Instance.new("TextButton")
+		sw:SetAttribute("ThemeExempt", true)
+		sw.Size = UDim2.fromOffset(24, 11)
+		sw.Position = UDim2.new(1, -24, 0, 2)
+		sw.Text = ""
+		sw.AutoButtonColor = false
+		sw.BackgroundColor3 = ThemeVals[name]
+		sw.BorderSizePixel = 0
+		sw.ZIndex = row.ZIndex
+		sw.Parent = row
+		round(sw, 5)
+		stroke(sw, Color3.fromRGB(4, 4, 4))
+		FlagSetters[tflag] = function(c) sw.BackgroundColor3 = c end
+		sw.MouseButton1Click:Connect(function()
+			if togglePopupFor(sw) then return end
+			local pop = popupAtMouse(180, popupLevelFor(sw), sw)
+			buildColorPopup(pop, tflag, function(c)
+				sw.BackgroundColor3 = c
+				applyThemeColor(name, c)
+			end)
+		end)
+	end
+
+	-- ================= Title (menu | game) =================
+	local menuSec = buildSection(miscMain, { title = "Title", x = 492, w = 232, h = 490, y = 10 })
+	local menuPage, gamePage
+	buildSubTabs(menuSec, { "menu", "game" }, function(n)
+		if menuPage then menuPage.Visible = n == "menu" end
+		if gamePage then gamePage.Visible = n == "game" end
+	end)
+	menuPage = tabPage(menuSec, true)
+	gamePage = tabPage(menuSec)
+
+	-- menu tab
+	buildKeybind(menuPage, { flag = "menu_key", text = "menu keybind", default = "Insert", onPressed = toggleMenu })
+	buildToggle(menuPage, { flag = "show_keybinds", text = "show keybinds", callback = function(v)
+		keybindList.Visible = v
+	end })
+	buildToggle(menuPage, { flag = "keystrokes", text = "keystrokes", callback = function(v)
+		keystrokes.Visible = v
+	end })
+	buildToggle(menuPage, { flag = "motion_graph", text = "motion graph",
+		callback = function(v) motionGraph.Visible = v end,
+		gear = function(pop)
+			buildDropdown(pop, { flag = "motion_mode", label = "mode",
+				options = { "dots", "lines", "waves" }, default = Flags.motion_mode or "lines" })
+			buildSlider(pop, { flag = "motion_scale", text = "scale", min = 0.1, max = 5, step = 0.1, default = 1 })
+		end })
+	buildToggle(menuPage, { flag = "watermark", text = "watermark", default = true,
+		callback = function(v) watermark.Visible = v end,
+		gear = function(pop)
+			buildDropdown(pop, { flag = "watermark_info", header = "display info", multi = true,
+				options = { "FPS", "Time", "Date", "Username", "Display Name" },
+				default = { "FPS", "Time" } })
+		end })
+	buildDropdown(menuPage, { flag = "menu_font", label = "font", options = FontList,
+		default = "Verdana-Font", callback = function(name)
+			if applyFont(name) then notify("font: " .. name)
+			else notify("failed to load font: " .. name) end
+		end })
+	do -- accent color swatch: repaints every accent-bound element live
+		buildToggle(menuPage, { flag = "accent_enabled", text = "accent color", default = true,
+			colors = { T.accent } })
+		local swatchSetter = FlagSetters["accent_enabled_color"] -- keep swatch updating too
+		FlagSetters["accent_enabled_color"] = function(c)
+			if swatchSetter then swatchSetter(c) end
+			T.accent = c
+			for _, fn in ipairs(AccentUsers) do pcall(fn) end
+		end
+	end
+	local skipSaved = false
+	pcall(function() skipSaved = isfile(baseFolder .. '/skip_loader.txt') end)
+	buildToggle(menuPage, { flag = "skip_loader", text = "skip loader", default = skipSaved,
+		tooltip = "don't show the loader window next launch",
+		callback = function(v)
+			pcall(function()
+				if v then writefile(baseFolder .. '/skip_loader.txt', "1")
+				elseif isfile(baseFolder .. '/skip_loader.txt') then delfile(baseFolder .. '/skip_loader.txt') end
+			end)
+		end })
+	buildActionButton(menuPage, { text = "call notify", callback = function()
+		notify("normal notification", 3, "normal")
+		notify("warning notification", 3, "warning")
+		notify("error notification", 3, "error")
+		notify("risky notification", 3, "risky")
+	end })
+	buildActionButton(menuPage, { text = "force reset", callback = function()
+		for name, def in pairs(ThemeDefaults) do applyThemeColor(name, def) end
+		FlagSetters["accent_enabled_color"](Color3.fromRGB(216, 110, 122))
+		notify("theme reset to defaults")
+	end, tooltip = "reset all theme colors" })
+	buildActionButton(menuPage, { text = "unload menu", callback = unloadAll })
+
+	-- game tab (reference: copy jobid/gameid/join script, rejoin, players)
+	local TeleportService = game:GetService("TeleportService")
+	buildButtonPair(gamePage,
+		{ text = "copy jobid", callback = function()
+			pcall(function() setclipboard(game.JobId) end) notify("copied jobid")
+		end },
+		{ text = "copy gameid", callback = function()
+			pcall(function() setclipboard(tostring(game.PlaceId)) end) notify("copied gameid")
+		end })
+	buildActionButton(gamePage, { text = "copy join script", callback = function()
+		pcall(function()
+			setclipboard(('game:GetService("TeleportService"):TeleportToPlaceInstance(%d, "%s")')
+				:format(game.PlaceId, game.JobId))
+		end)
+		notify("copied join script")
+	end })
+	buildButtonPair(gamePage,
+		{ text = "rejoin", callback = function()
+			pcall(function() TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, player) end)
+		end },
+		{ text = "join another", callback = function()
+			pcall(function() TeleportService:Teleport(game.PlaceId, player) end)
+		end })
+	buildSlider(gamePage, { flag = "players_min", text = "players  Min  :", min = 0, max = 50, step = 1, default = 15 })
+
+end
+
+--========================================================================
+-- Init
+--========================================================================
+selectPage("Settings")
+
+--========================================================================
+-- Search bar: LIVE filter — each key typed hides every element whose
+-- label doesn't start-match/contain the query; empty text restores all
+--========================================================================
+searchBox:GetPropertyChangedSignal("Text"):Connect(function()
+	local q = searchBox.Text:lower()
+	for _, s in ipairs(Searchables) do
+		if s.holder.Parent then
+			if q == "" then
+				s.holder.Visible = true
+			else
+				s.holder.Visible = s.label:lower():find(q, 1, true) ~= nil
+			end
+		end
+	end
+end)
+
+--========================================================================
+-- Mobile sizing + loader splash
+--========================================================================
+if UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled then
+	main.Size = UDim2.fromOffset(650, 450)
+	main.Position = UDim2.new(0.5, -325, 0.5, -225)
+end
+
+-- Loader ("Operation One" style): Information panel + load/exit.
+-- Fully customizable via getgenv().symbol_loader = { ... } (all optional):
+--   enabled     (false = never show)
+--   title       (window title, default = UIConfig.name)
+--   infoTitle   ("Information")
+--   optionsTitle("Options")
+--   welcome     ("Welcome <displayname>")
+--   text        ("Loaded <name>")
+--   version     ("Version 1.0")
+--   image       (asset/rbxthumb url; default = your avatar headshot)
+--   loadText    ("load")   exitText ("exit")
+--   width/height (410 x 210)
+-- Also skippable via the "skip loader" setting (persisted to a file).
+local LC = (getgenv and getgenv().symbol_loader) or {}
+LC.enabled      = LC.enabled ~= false
+LC.title        = LC.title or UIConfig.name
+LC.infoTitle    = LC.infoTitle or "Information"
+LC.optionsTitle = LC.optionsTitle or "Options"
+LC.welcome      = LC.welcome or ("Welcome " .. player.DisplayName)
+LC.text         = LC.text or ("Loaded " .. UIConfig.name)
+LC.version      = LC.version or "Version 1.0"
+-- image accepts URLs, asset ids, or rbx content strings
+LC.image        = resolveImage(LC.image or UIConfig.icon)
+	or ("rbxthumb://type=AvatarHeadShot&id=" .. player.UserId .. "&w=150&h=150")
+LC.loadText     = LC.loadText or "load"
+LC.exitText     = LC.exitText or "exit"
+LC.width        = LC.width or 410
+LC.height       = LC.height or 210
+
+local skipLoader = not LC.enabled
+pcall(function() skipLoader = skipLoader or isfile(baseFolder .. '/skip_loader.txt') end)
+
+if not skipLoader then
+	main.Visible = false
+	local loader = Instance.new("Frame")
+	loader.Size = UDim2.fromOffset(LC.width, LC.height)
+	loader.Position = UDim2.new(0.5, -LC.width / 2, 0.5, -LC.height / 2)
+	loader.BackgroundColor3 = T.bg
+	loader.BorderSizePixel = 0
+	loader.ZIndex = 200
+	loader.Parent = gui
+	round(loader, 4)
+	stroke(loader, Color3.fromRGB(4, 4, 4))
+	makeDraggable(loader) -- moveable
+	local title = txt(loader, "", 14, T.text, true)
+	title.RichText = true
+	-- default title uses the two-part brand (secondary in accent color)
+	title.Text = (getgenv and getgenv().symbol_loader and getgenv().symbol_loader.title) and LC.title or brandRich()
+	title.Size = UDim2.new(1, -16, 0, 22)
+	title.Position = UDim2.fromOffset(10, 0)
+	title.ZIndex = 201
+
+	local info = Instance.new("Frame")
+	info.Size = UDim2.new(1, -16, 0, 110)
+	info.Position = UDim2.fromOffset(8, 26)
+	info.BackgroundColor3 = T.section
+	info.BorderSizePixel = 0
+	info.ZIndex = 201
+	info.Parent = loader
+	stroke(info, Color3.fromRGB(4, 4, 4))
+	local infoTitle = txt(info, LC.infoTitle, 14, T.text, true)
+	infoTitle.Size = UDim2.new(1, -16, 0, 20)
+	infoTitle.Position = UDim2.fromOffset(8, 0)
+	infoTitle.ZIndex = 202
+	hline(info, 20, T.line, 202)
+	local infoImg = Instance.new("ImageLabel")
+	infoImg.Size = UDim2.fromOffset(80, 80)
+	infoImg.Position = UDim2.fromOffset(10, 26)
+	infoImg.BackgroundColor3 = T.inset
+	infoImg.BorderSizePixel = 0
+	infoImg.ZIndex = 202
+	infoImg.Parent = info
+	pcall(function() infoImg.Image = LC.image end)
+	local infoText = txt(info, LC.welcome .. "\n" .. LC.text .. "\n" .. LC.version, 13, T.text)
+	infoText.Size = UDim2.new(1, -110, 0, 80)
+	infoText.Position = UDim2.fromOffset(100, 26)
+	infoText.TextYAlignment = Enum.TextYAlignment.Top
+	infoText.ZIndex = 202
+
+	local optFrame = Instance.new("Frame")
+	optFrame.Size = UDim2.new(1, -16, 0, 60)
+	optFrame.Position = UDim2.fromOffset(8, 142)
+	optFrame.BackgroundColor3 = T.section
+	optFrame.BorderSizePixel = 0
+	optFrame.ZIndex = 201
+	optFrame.Parent = loader
+	stroke(optFrame, Color3.fromRGB(4, 4, 4))
+	local optTitle = txt(optFrame, LC.optionsTitle, 14, T.text, true)
+	optTitle.Size = UDim2.new(1, -16, 0, 20)
+	optTitle.Position = UDim2.fromOffset(8, 0)
+	optTitle.ZIndex = 202
+	hline(optFrame, 20, T.line, 202)
+	local function loaderBtn(text, x, cb)
+		local b = Instance.new("TextButton")
+		b.Size = UDim2.new(0.5, -12, 0, 24)
+		b.Position = UDim2.new(x, x == 0.5 and 4 or 8, 0, 28)
+		b.Text = text
+		b.TextSize = 14
+		b.FontFace = VERDANA
+		b.TextColor3 = T.text
+		b.AutoButtonColor = false
+		b.ZIndex = 202
+		b.Parent = optFrame
+		styleElement(b, true)
+		b.MouseButton1Click:Connect(cb)
+		return b
+	end
+	loaderBtn(LC.loadText, 0, function()
+		loader:Destroy()
+		main.Visible = true
+		notify(UIConfig.name .. " loaded")
+	end)
+	loaderBtn(LC.exitText, 0.5, function() unloadAll() end)
+end
+
+-- auto load (config + theme) saved from the Settings panels
+pcall(function()
+	if isfile(baseFolder .. '/cfg_autoload.txt') then
+		loadConfig(readfile(baseFolder .. '/cfg_autoload.txt'))
+	end
+	if isfile(baseFolder .. '/theme_autoload.txt') then
+		loadTheme(readfile(baseFolder .. '/theme_autoload.txt'))
+	end
+end)
+
+-- "loaded" notification comes from the loader's load button; only notify
+-- here when the loader was skipped and the menu appears immediately
+if skipLoader then notify(UIConfig.name .. " loaded") end
+print(UIConfig.name .. " UI loaded")
+
+--========================================================================
+-- Public library API — loadstring this file and build your own UI:
+--   local lib = loadstring(game:HttpGet(url))()
+--   local page = lib:AddTab("Combat", "crosshair")
+--   local sec  = lib.Section(page, { title = "Main", x = 12, w = 232, h = 300, y = 10 })
+--   lib.Toggle(sec, { flag = "my_toggle", text = "Enabled" })
+--   if lib.Flags.my_toggle then ... end
+--========================================================================
+local Library = {
+	Flags       = Flags,
+	Setters     = FlagSetters,
+	Theme       = T,
+	Notify      = function(_, msg, dur, ntype) notify(msg, dur, ntype) end,
+	AddTab      = function(_, name, iconName, sideEntries) return addTab(name, iconName, sideEntries) end,
+	SelectPage  = function(_, name) selectPage(name) end,
+	Section     = buildSection,
+	SubFrame    = subFrame,
+	SubTabs     = buildSubTabs,
+	Toggle      = buildToggle,
+	Slider      = buildSlider,
+	Dropdown    = buildDropdown,
+	DropdownRow = buildDropdownRow,
+	Listbox     = buildListbox,
+	Textbox     = buildTextbox,
+	SearchRow   = buildSearchRow,
+	Button      = buildActionButton,
+	ButtonPair  = buildButtonPair,
+	Keybind     = buildKeybind,
+	Pages       = Pages,
+	SaveConfig  = saveConfig,
+	LoadConfig  = loadConfig,
+	ToggleMenu  = toggleMenu,
+	Unload      = unloadAll,
+	SetFlag     = function(_, k, v)
+		Flags[k] = v
+		if FlagSetters[k] then pcall(FlagSetters[k], v) end
+	end,
+	Label       = function(parent, text, size, color, bold)
+		local l = txt(parent, text, size or 14, color or T.dim, bold)
+		l.Size = UDim2.new(1, 0, 0, (size or 14))
+		return l
+	end,
+	-- dark display box (e.g. skin render preview); opts: h, outline, image
+	Box         = function(parent, opts)
+		opts = opts or {}
+		local f = Instance.new("Frame")
+		f.Size = UDim2.new(1, 0, 0, opts.h or 150)
+		f.BackgroundColor3 = Color3.fromRGB(12, 12, 12)
+		f.BorderSizePixel = 0
+		f.ZIndex = (parent.ZIndex or 1) + 1
+		f.Parent = parent
+		stroke(f, opts.outline or Color3.fromRGB(4, 4, 4))
+		local img = Instance.new("ImageLabel")
+		img.Size = UDim2.new(1, -12, 1, -12)
+		img.Position = UDim2.fromOffset(6, 6)
+		img.BackgroundTransparency = 1
+		img.Image = resolveImage(opts.image) or ""
+		img.ZIndex = f.ZIndex
+		img.Parent = f
+		return f, img
+	end,
+	ResolveImage = resolveImage,
+}
+if getgenv then getgenv().symbollib = Library end
+return Library
