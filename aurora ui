@@ -39,9 +39,9 @@ local Library = {
 
     HudRegistry = {};
 
-    -- < Aurora.pw theme >
-    -- MainColor & BackgroundColor share one unified fully-dark tone
-    -- OutlineColor   = black borders (blends with the dark theme)
+
+
+
     FontColor = Color3.fromRGB(215, 215, 215);
     MainColor = Color3.fromRGB(10, 10, 10);
     BackgroundColor = Color3.fromRGB(10, 10, 10);
@@ -50,8 +50,8 @@ local Library = {
     RiskColor = Color3.fromRGB(255, 50, 50),
 
     Black = Color3.new(0, 0, 0);
-    -- Roblox has no native Verdana enum; Arial is the closest metric match.
-    -- Swap this line if your executor exposes a custom Verdana font object.
+
+
     Font = Enum.Font.Arial,
 
     OpenedFrames = {};
@@ -80,7 +80,7 @@ local Library = {
     ChatLogRows = {};
     ChatLogEnabled = false;
 
-    -- Exposed so ThemeManager / SaveManager can read them via Library.Options / Library.Toggles
+
     Options = Options;
     Toggles = Toggles;
 };
@@ -218,8 +218,10 @@ function Library:GetInputPosition(Input)
     return Pos.X, Pos.Y;
 end;
 
-function Library:MakeDraggable(Instance, Cutoff)
+function Library:MakeDraggable(Instance, Cutoff, DragHandle)
     Instance.Active = true;
+    DragHandle = DragHandle or Instance;
+    DragHandle.Active = true;
 
     local DragPreview = Library:Create('Frame', {
         AnchorPoint = Instance.AnchorPoint;
@@ -239,13 +241,43 @@ function Library:MakeDraggable(Instance, Cutoff)
         BorderColor3 = 'AccentColor';
     }, true);
 
-    Instance.InputBegan:Connect(function(Input)
+    local Dragging = false;
+    local DragInput = nil;
+    local ObjectOffset = nil;
+    local InputChangedConnection = nil;
+    local StateConnection = nil;
+
+    local function StopDragging()
+        if not Dragging then
+            return;
+        end;
+
+        Dragging = false;
+        DragInput = nil;
+
+        if InputChangedConnection then
+            InputChangedConnection:Disconnect();
+            InputChangedConnection = nil;
+        end;
+
+        if StateConnection then
+            StateConnection:Disconnect();
+            StateConnection = nil;
+        end;
+
+        if DragPreview.Parent then
+            Instance.Position = DragPreview.Position;
+            DragPreview.Visible = false;
+        end;
+    end;
+
+    DragHandle.InputBegan:Connect(function(Input)
         if Instance:GetAttribute('AuroraDragLocked') or not Library:IsPrimaryInput(Input) then
             return;
         end;
 
         local StartX, StartY = Library:GetInputPosition(Input);
-        local ObjectOffset = Vector2.new(
+        ObjectOffset = Vector2.new(
             StartX - Instance.AbsolutePosition.X,
             StartY - Instance.AbsolutePosition.Y
         );
@@ -264,33 +296,38 @@ function Library:MakeDraggable(Instance, Cutoff)
         DragPreview.AnchorPoint = Instance.AnchorPoint;
         DragPreview.Visible = true;
 
-        if Input.UserInputType == Enum.UserInputType.MouseButton1 then
-            while InputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) and DragPreview.Parent do
-                DragPreview.Position = UDim2.new(
-                    0,
-                    Mouse.X - ObjectOffset.X + Instance.Size.X.Offset * Instance.AnchorPoint.X,
-                    0,
-                    Mouse.Y - ObjectOffset.Y + Instance.Size.Y.Offset * Instance.AnchorPoint.Y
-                );
-                RenderStepped:Wait();
-            end;
-        else
-            while Input.UserInputState ~= Enum.UserInputState.End and DragPreview.Parent do
-                local X, Y = Library:GetInputPosition(Input);
-                DragPreview.Position = UDim2.new(
-                    0,
-                    X - ObjectOffset.X + Instance.Size.X.Offset * Instance.AnchorPoint.X,
-                    0,
-                    Y - ObjectOffset.Y + Instance.Size.Y.Offset * Instance.AnchorPoint.Y
-                );
-                RenderStepped:Wait();
-            end;
-        end;
+        Dragging = true;
+        DragInput = Input;
 
-        if DragPreview.Parent then
-            Instance.Position = DragPreview.Position;
-            DragPreview.Visible = false;
-        end;
+        StateConnection = Input:GetPropertyChangedSignal('UserInputState'):Connect(function()
+            if Input.UserInputState == Enum.UserInputState.End
+                or Input.UserInputState == Enum.UserInputState.Cancel then
+                StopDragging();
+            end;
+        end);
+
+        InputChangedConnection = InputService.InputChanged:Connect(function(ChangedInput)
+            if not Dragging or not DragPreview.Parent then
+                return;
+            end;
+
+            local IsMouseMove = DragInput.UserInputType == Enum.UserInputType.MouseButton1
+                and ChangedInput.UserInputType == Enum.UserInputType.MouseMovement;
+            local IsTouchMove = DragInput.UserInputType == Enum.UserInputType.Touch
+                and ChangedInput.UserInputType == Enum.UserInputType.Touch;
+
+            if not IsMouseMove and not IsTouchMove then
+                return;
+            end;
+
+            local X, Y = Library:GetInputPosition(ChangedInput);
+            DragPreview.Position = UDim2.new(
+                0,
+                X - ObjectOffset.X + Instance.AbsoluteSize.X * Instance.AnchorPoint.X,
+                0,
+                Y - ObjectOffset.Y + Instance.AbsoluteSize.Y * Instance.AnchorPoint.Y
+            );
+        end);
     end);
 end;
 
@@ -421,7 +458,7 @@ function Library:GetDarkerColor(Color)
 end;
 Library.AccentColorDark = Library:GetDarkerColor(Library.AccentColor);
 
--- < Aurora glow > (from glow.lua) - soft outer glow around a frame
+
 local GLOW_IMAGE = 'rbxassetid://18245826428';
 local GLOW_SLICE = Rect.new(Vector2.new(21, 21), Vector2.new(79, 79));
 
@@ -495,15 +532,15 @@ function Library:RemoveFromRegistry(Instance)
 end;
 
 function Library:UpdateColorsUsingRegistry()
-    -- TODO: Could have an 'active' list of objects
-    -- where the active list only contains Visible objects.
 
-    -- IMPL: Could setup .Changed events on the AddToRegistry function
-    -- that listens for the 'Visible' propert being changed.
-    -- Visible: true => Add to active list, and call UpdateColors function
-    -- Visible: false => Remove from active list.
 
-    -- The above would be especially efficient for a rainbow menu color or live color-changing.
+
+
+
+
+
+
+
 
     for Idx, Object in next, Library.Registry do
         for Property, ColorIdx in next, Object.Properties do
@@ -517,7 +554,7 @@ function Library:UpdateColorsUsingRegistry()
 end;
 
 function Library:GiveSignal(Signal)
-    -- Only used for signals not attached to library instances, as those should be cleaned up on object destruction by Roblox
+
     table.insert(Library.Signals, Signal)
 end
 
@@ -530,13 +567,13 @@ function Library:Unload()
         Library.BlurEffect = nil
     end
 
-    -- Unload all of the signals
+
     for Idx = #Library.Signals, 1, -1 do
         local Connection = table.remove(Library.Signals, Idx)
         Connection:Disconnect()
     end
 
-     -- Call our unload callback, maybe to undo some hooks etc
+
     if Library.OnUnload then
         Library.OnUnload()
     end
@@ -872,7 +909,7 @@ do
     function Funcs:AddColorPicker(Idx, Info)
         local ParentObj = self;
         local ToggleLabel = self.TextLabel;
-        -- local Container = self.Container;
+
 
         assert(Info.Default, 'AddColorPicker: Missing default value.');
 
@@ -905,7 +942,7 @@ do
             Parent = ToggleLabel;
         });
 
-        -- Transparency image taken from https://github.com/matas3535/SplixPrivateDrawingLibrary/blob/main/Library.lua cus i'm lazy
+
         local CheckerFrame = Library:Create('ImageLabel', {
             BorderSizePixel = 0;
             Size = UDim2.new(0, 27, 0, 13);
@@ -915,10 +952,10 @@ do
             Parent = DisplayFrame;
         });
 
-        -- 1/16/23
-        -- Rewrote this to be placed inside the Library ScreenGui
-        -- There was some issue which caused RelativeOffset to be way off
-        -- Thus the color picker would never show
+
+
+
+
 
         local PickerFrameOuter = Library:Create('Frame', {
             Name = 'Color';
@@ -1122,7 +1159,7 @@ do
             Position = UDim2.fromOffset(5, 5);
             TextXAlignment = Enum.TextXAlignment.Left;
             TextSize = 11;
-            Text = ColorPicker.Title,--Info.Default;
+            Text = ColorPicker.Title,
             TextWrapped = false;
             ZIndex = 16;
             Parent = PickerFrameInner;
@@ -1557,7 +1594,7 @@ do
         local KeyPicker = {
             Value = Info.Default;
             Toggled = false;
-            Mode = Info.Mode or 'Toggle'; -- Always, Toggle, Hold
+            Mode = Info.Mode or 'Toggle';
             Type = 'KeyPicker';
             Callback = Info.Callback or function(Value) end;
             ChangedCallback = Info.ChangedCallback or function(New) end;
@@ -1570,7 +1607,7 @@ do
             Info.Mode = 'Toggle'
         end
 
-        -- Aurora: empty / unbound keybinds render as '...'
+
         local function KeyDisplay(Key)
             if (not Key) or Key == '' or Key == 'None' then
                 return '...';
@@ -1639,7 +1676,7 @@ do
             BorderColor3 = 'OutlineColor';
         });
 
-        -- Aurora: little red accent bar + title on the mode widget
+
         local ModeHighlight = Library:Create('Frame', {
             BackgroundColor3 = Library.AccentColor;
             BorderSizePixel = 0;
@@ -1799,9 +1836,10 @@ do
 
                 local Key = KeyPicker.Value;
 
-                if Key == 'MB1' or Key == 'MB2' then
+                if Key == 'MB1' or Key == 'MB2' or Key == 'MB3' then
                     return Key == 'MB1' and InputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1)
-                        or Key == 'MB2' and InputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2);
+                        or Key == 'MB2' and InputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2)
+                        or Key == 'MB3' and InputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton3);
                 else
                     return InputService:IsKeyDown(Enum.KeyCode[KeyPicker.Value]);
                 end;
@@ -1877,6 +1915,8 @@ do
                         Key = 'MB1';
                     elseif Input.UserInputType == Enum.UserInputType.MouseButton2 then
                         Key = 'MB2';
+                    elseif Input.UserInputType == Enum.UserInputType.MouseButton3 then
+                        Key = 'MB3';
                     end;
 
                     Break = true;
@@ -1906,9 +1946,10 @@ do
                 if KeyPicker.Mode == 'Toggle' then
                     local Key = KeyPicker.Value;
 
-                    if Key == 'MB1' or Key == 'MB2' then
+                    if Key == 'MB1' or Key == 'MB2' or Key == 'MB3' then
                         if Key == 'MB1' and Input.UserInputType == Enum.UserInputType.MouseButton1
-                        or Key == 'MB2' and Input.UserInputType == Enum.UserInputType.MouseButton2 then
+                        or Key == 'MB2' and Input.UserInputType == Enum.UserInputType.MouseButton2
+                        or Key == 'MB3' and Input.UserInputType == Enum.UserInputType.MouseButton3 then
                             KeyPicker.Toggled = not KeyPicker.Toggled
                             KeyPicker:DoClick()
                         end;
@@ -2387,7 +2428,7 @@ do
     end;
 
     function Funcs:AddButton(...)
-        -- TODO: Eventually redo this
+
         local Button = {};
         local function ProcessButtonParams(Class, Obj, ...)
             local Props = select(1, ...)
@@ -2434,7 +2475,7 @@ do
                 Parent = Inner;
             });
 
-            -- Aurora: subtle dark gradient so buttons stay black-on-theme
+
             Library:Create('UIGradient', {
                 Color = ColorSequence.new({
                     ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 255, 255)),
@@ -2765,28 +2806,28 @@ do
             end);
         end
 
-        -- https://devforum.roblox.com/t/how-to-make-textboxes-follow-current-cursor-position/1368429/6
-        -- thank you nicemike40 :)
+
+
 
         local function Update()
             local PADDING = 2
             local reveal = Container.AbsoluteSize.X
 
             if not Box:IsFocused() or Box.TextBounds.X <= reveal - 2 * PADDING then
-                -- we aren't focused, or we fit so be normal
+
                 Box.Position = UDim2.new(0, PADDING, 0, 0)
             else
-                -- we are focused and don't fit, so adjust position
+
                 local cursor = Box.CursorPosition
                 if cursor ~= -1 then
-                    -- calculate pixel width of text from start to cursor
+
                     local subtext = string.sub(Box.Text, 1, cursor-1)
                     local width = TextService:GetTextSize(subtext, Box.TextSize, Box.Font, Vector2.new(math.huge, math.huge)).X
 
-                    -- check if we're inside the box with the cursor
+
                     local currentCursorPos = Box.Position.X.Offset + width
 
-                    -- adjust if necessary
+
                     if currentCursorPos < PADDING then
                         Box.Position = UDim2.fromOffset(PADDING-width, 0)
                     elseif currentCursorPos > reveal - PADDING - 1 then
@@ -2886,7 +2927,7 @@ do
             Parent = ToggleLabel;
         });
 
-        -- Aurora: keep the right-aligned keybind widget inset from the section edge
+
         Library:Create('UIPadding', {
             PaddingRight = UDim.new(0, 8);
             Parent = ToggleLabel;
@@ -2943,18 +2984,61 @@ do
             Library:UpdateDependencyBoxes();
         end;
 
+        local IgnoreMouseUntil = 0;
+
         ToggleRegion.InputBegan:Connect(function(Input)
-            if Library:IsPrimaryInput(Input) and not Library:MouseIsOverOpenedFrame() then
-                for _, Addon in next, Toggle.Addons do
-                    local HitFrame = Addon.DisplayFrame or Addon.PickOuter;
-                    if HitFrame and Library:IsMouseOverFrame(HitFrame) then
+            if not Library:IsPrimaryInput(Input) or Library:MouseIsOverOpenedFrame() then
+                return;
+            end;
+
+            if Input.UserInputType == Enum.UserInputType.MouseButton1 and os.clock() < IgnoreMouseUntil then
+                return;
+            end;
+
+            local StartX, StartY = Library:GetInputPosition(Input);
+            for _, Addon in next, Toggle.Addons do
+                local HitFrame = Addon.DisplayFrame or Addon.PickOuter;
+                if HitFrame then
+                    local Pos = HitFrame.AbsolutePosition;
+                    local Size = HitFrame.AbsoluteSize;
+                    if StartX >= Pos.X and StartX <= Pos.X + Size.X
+                        and StartY >= Pos.Y and StartY <= Pos.Y + Size.Y then
                         return;
                     end
                 end
+            end
 
-                Toggle:SetValue(not Toggle.Value) -- Why was it not like this from the start?
+            if Input.UserInputType == Enum.UserInputType.MouseButton1 then
+                Toggle:SetValue(not Toggle.Value);
                 Library:AttemptSave();
-            end;
+                return;
+            end
+
+            local Moved = false;
+            local ChangedConnection;
+            local StateConnection;
+
+            ChangedConnection = InputService.InputChanged:Connect(function(ChangedInput)
+                if ChangedInput == Input then
+                    local X, Y = Library:GetInputPosition(ChangedInput);
+                    Moved = Moved or Vector2.new(X - StartX, Y - StartY).Magnitude > 10;
+                end;
+            end);
+
+            StateConnection = Input:GetPropertyChangedSignal('UserInputState'):Connect(function()
+                if Input.UserInputState ~= Enum.UserInputState.End
+                    and Input.UserInputState ~= Enum.UserInputState.Cancel then
+                    return;
+                end;
+
+                ChangedConnection:Disconnect();
+                StateConnection:Disconnect();
+                if not Moved and Input.UserInputState == Enum.UserInputState.End then
+                    IgnoreMouseUntil = os.clock() + 0.5;
+                    Toggle:SetValue(not Toggle.Value);
+                    Library:AttemptSave();
+                end;
+            end);
         end);
 
         if Toggle.Risky then
@@ -3220,7 +3304,7 @@ do
             Value = Info.Multi and {};
             Multi = Info.Multi;
             Type = 'Dropdown';
-            SpecialType = Info.SpecialType; -- can be either 'Player' or 'Team'
+            SpecialType = Info.SpecialType;
             Callback = Info.Callback or function(Value) end;
         };
 
@@ -3730,7 +3814,7 @@ do
     end;
 end;
 
--- < Create other UI elements >
+
 do
     Library.WeatherLayer = Library:Create('Frame', {
         BackgroundTransparency = 1;
@@ -4277,6 +4361,108 @@ function Library:CreateESPPreview(Window, ESP)
         return nil;
     end;
 
+    Controller.ExternalZoom = true;
+
+    local ZoomSurface = Library:Create('TextButton', {
+        Active = true;
+        AutoButtonColor = false;
+        BackgroundTransparency = 1;
+        BorderSizePixel = 0;
+        Size = UDim2.new(1, 0, 1, 0);
+        Text = '';
+        ZIndex = 200;
+        Parent = Container;
+    });
+
+    local ZoomTouches = {};
+    local PinchDistance = nil;
+    local PinchZoom = nil;
+    local LastWheelTime = 0;
+
+    local function ApplyPreviewZoom(Value)
+        if type(Controller.SetZoom) == 'function' then
+            Controller:SetZoom(Value, true);
+        end;
+    end;
+
+    local function GetTwoZoomTouches()
+        local FirstPosition;
+        local SecondPosition;
+        for _, Position in next, ZoomTouches do
+            if not FirstPosition then
+                FirstPosition = Position;
+            else
+                SecondPosition = Position;
+                break;
+            end;
+        end;
+        return FirstPosition, SecondPosition;
+    end;
+
+    local function HandlePreviewWheel(Input)
+        local Now = os.clock();
+        if Now - LastWheelTime < 0.01 then
+            return;
+        end;
+        LastWheelTime = Now;
+        ApplyPreviewZoom((Controller.Zoom or 1.9) - Input.Position.Z * 0.15);
+    end;
+
+    ZoomSurface.InputChanged:Connect(function(Input)
+        if Input.UserInputType == Enum.UserInputType.MouseWheel then
+            HandlePreviewWheel(Input);
+        end;
+    end);
+
+    ZoomSurface.InputBegan:Connect(function(Input)
+        if Input.UserInputType ~= Enum.UserInputType.Touch then
+            return;
+        end;
+        ZoomTouches[Input] = Vector2.new(Input.Position.X, Input.Position.Y);
+        local FirstPosition, SecondPosition = GetTwoZoomTouches();
+        if FirstPosition and SecondPosition then
+            PinchDistance = (SecondPosition - FirstPosition).Magnitude;
+            PinchZoom = Controller.Zoom or 1.9;
+        end;
+    end);
+
+    Library:GiveSignal(InputService.InputChanged:Connect(function(Input)
+        if Input.UserInputType == Enum.UserInputType.MouseWheel then
+            local MousePosition = InputService:GetMouseLocation();
+            local Position = ZoomSurface.AbsolutePosition;
+            local Size = ZoomSurface.AbsoluteSize;
+            if MousePosition.X >= Position.X
+                and MousePosition.X <= Position.X + Size.X
+                and MousePosition.Y >= Position.Y
+                and MousePosition.Y <= Position.Y + Size.Y then
+                HandlePreviewWheel(Input);
+            end;
+            return;
+        end;
+        if Input.UserInputType ~= Enum.UserInputType.Touch or not ZoomTouches[Input] then
+            return;
+        end;
+        ZoomTouches[Input] = Vector2.new(Input.Position.X, Input.Position.Y);
+        local FirstPosition, SecondPosition = GetTwoZoomTouches();
+        if FirstPosition and SecondPosition then
+            local Distance = (SecondPosition - FirstPosition).Magnitude;
+            if not PinchDistance or not PinchZoom then
+                PinchDistance = Distance;
+                PinchZoom = Controller.Zoom or 1.9;
+            elseif Distance > 1 then
+                ApplyPreviewZoom(PinchZoom * PinchDistance / Distance);
+            end;
+        end;
+    end));
+
+    Library:GiveSignal(InputService.InputEnded:Connect(function(Input)
+        if ZoomTouches[Input] then
+            ZoomTouches[Input] = nil;
+            PinchDistance = nil;
+            PinchZoom = nil;
+        end;
+    end));
+
     local PreviewMoved = false;
 
     Preview.InputBegan:Connect(function(Input)
@@ -4481,8 +4667,6 @@ function Library:CreateWindow(...)
         Parent = ScreenGui;
     });
 
-    Library:MakeDraggable(Outer, 25);
-
     local ResizeHandle = Library:Create('Frame', {
         AnchorPoint = Vector2.new(1, 1);
         BackgroundTransparency = 1;
@@ -4579,7 +4763,7 @@ function Library:CreateWindow(...)
         end);
     end);
 
-    -- < Aurora red outer glow >
+
     Library:CreateGlow(Outer, {
         Color = Library.AccentColor,
         Transparency = 0.35,
@@ -4610,6 +4794,8 @@ function Library:CreateWindow(...)
         ZIndex = 1;
         Parent = Inner;
     });
+
+    Library:MakeDraggable(Outer, 25, WindowLabel);
 
     local MainSectionOuter = Library:Create('Frame', {
         BackgroundColor3 = Library.MainColor;
@@ -4654,7 +4840,7 @@ function Library:CreateWindow(...)
         Parent = TabArea;
     });
 
-    -- < Aurora: equally-spaced tab buttons >
+
     local TabButtons = {};
 
     local function ResizeTabButtons()
@@ -4701,7 +4887,7 @@ function Library:CreateWindow(...)
             Parent = TabArea;
         });
 
-        -- Track this button and equally distribute the tab-bar width across all tabs
+
         table.insert(TabButtons, TabButton);
         ResizeTabButtons();
 
@@ -4713,7 +4899,7 @@ function Library:CreateWindow(...)
             Parent = TabButton;
         });
 
-        -- < Aurora active-tab underline >
+
         local TabUnderline = Library:Create('Frame', {
             BackgroundColor3 = Library.AccentColor;
             BorderSizePixel = 0;
@@ -4755,7 +4941,7 @@ function Library:CreateWindow(...)
             end;
         });
 
-        -- < Aurora 3-column layout > (wider sections, thin 6px gaps)
+
         local LeftSide = Library:Create('ScrollingFrame', {
             BackgroundTransparency = 1;
             BorderSizePixel = 0;
@@ -5267,7 +5453,7 @@ function Library:CreateWindow(...)
             local BoxInner = Library:Create('Frame', {
                 BackgroundColor3 = Library.BackgroundColor;
                 BorderColor3 = Color3.new(0, 0, 0);
-                -- BorderMode = Enum.BorderMode.Inset;
+
                 Size = UDim2.new(1, -2, 1, -2);
                 Position = UDim2.new(0, 1, 0, 1);
                 ZIndex = 4;
@@ -5289,7 +5475,7 @@ function Library:CreateWindow(...)
                 Parent = BoxInner;
             });
 
-            -- Aurora: accent line sits BELOW the section header (under "Main")
+
             local Highlight = Library:Create('Frame', {
                 BackgroundColor3 = Library.AccentColor;
                 BorderSizePixel = 0;
@@ -5303,7 +5489,7 @@ function Library:CreateWindow(...)
                 BackgroundColor3 = 'AccentColor';
             });
 
-            -- Aurora: section header is red
+
             Library:RemoveFromRegistry(GroupboxLabel);
             Library:AddToRegistry(GroupboxLabel, { TextColor3 = 'AccentColor' });
 
@@ -5321,7 +5507,7 @@ function Library:CreateWindow(...)
                 Parent = Container;
             });
 
-            -- < Aurora: inner padding around groupbox content >
+
             Library:Create('UIPadding', {
                 PaddingLeft = UDim.new(0, 3);
                 PaddingRight = UDim.new(0, 8);
@@ -5338,7 +5524,7 @@ function Library:CreateWindow(...)
                     end;
                 end;
 
-                -- 24 = header area, 8 = top padding, 6 = bottom margin
+
                 BoxOuter.Size = UDim2.new(1, 0, 0, 24 + 8 + Size + 6);
             end;
 
@@ -5361,7 +5547,7 @@ function Library:CreateWindow(...)
             return Tab:AddGroupbox({ Side = 2; Name = Name; });
         end;
 
-        -- alias used by some configs
+
         function Tab:AddMiddleGroupbox(Name)
             return Tab:AddGroupbox({ Side = 2; Name = Name; });
         end;
@@ -5392,7 +5578,7 @@ function Library:CreateWindow(...)
             local BoxInner = Library:Create('Frame', {
                 BackgroundColor3 = Library.BackgroundColor;
                 BorderColor3 = Color3.new(0, 0, 0);
-                -- BorderMode = Enum.BorderMode.Inset;
+
                 Size = UDim2.new(1, -2, 1, -2);
                 Position = UDim2.new(0, 1, 0, 1);
                 ZIndex = 4;
@@ -5403,7 +5589,7 @@ function Library:CreateWindow(...)
                 BackgroundColor3 = 'BackgroundColor';
             });
 
-            -- Aurora: optional red tabbox title (e.g. "Anti-hit")
+
             local HasTitle = type(Info.Name) == 'string' and Info.Name ~= '';
             local TitleOffset = HasTitle and 18 or 0;
 
@@ -5423,7 +5609,7 @@ function Library:CreateWindow(...)
                 Library:AddToRegistry(TabboxTitle, { TextColor3 = 'AccentColor' });
             end
 
-            -- Aurora: accent line sits BELOW the tabbox title
+
             local Highlight = Library:Create('Frame', {
                 BackgroundColor3 = Library.AccentColor;
                 BorderSizePixel = 0;
@@ -5476,7 +5662,7 @@ function Library:CreateWindow(...)
                     Parent = Button;
                 });
 
-                -- Aurora: active tabbox-tab underline
+
                 local ButtonUnderline = Library:Create('Frame', {
                     BackgroundColor3 = Library.AccentColor;
                     BorderSizePixel = 0;
@@ -5521,7 +5707,7 @@ function Library:CreateWindow(...)
                     Parent = Container;
                 });
 
-                -- < Aurora: inner padding around tabbox content >
+
                 Library:Create('UIPadding', {
                     PaddingLeft = UDim.new(0, 3);
                     PaddingRight = UDim.new(0, 8);
@@ -5540,8 +5726,8 @@ function Library:CreateWindow(...)
                     Button.BackgroundColor3 = Library.BackgroundColor;
                     Library.RegistryMap[Button].Properties.BackgroundColor3 = 'BackgroundColor';
 
-                    -- Aurora: active tabbox-tab red text + underline
-                    ButtonUnderline.Visible = true;
+
+                    ButtonUnderline.Visible = false;
                     ButtonLabel.TextColor3 = Library.AccentColor;
                     Library.RegistryMap[ButtonLabel].Properties.TextColor3 = 'AccentColor';
 
@@ -5555,7 +5741,7 @@ function Library:CreateWindow(...)
                     Button.BackgroundColor3 = Library.MainColor;
                     Library.RegistryMap[Button].Properties.BackgroundColor3 = 'MainColor';
 
-                    -- Aurora: inactive tabbox-tab reverts
+
                     ButtonUnderline.Visible = false;
                     ButtonLabel.TextColor3 = Library.FontColor;
                     Library.RegistryMap[ButtonLabel].Properties.TextColor3 = 'FontColor';
@@ -5586,7 +5772,7 @@ function Library:CreateWindow(...)
                         end;
                     end;
 
-                    -- 20 = tab-button row, TitleOffset = optional red title, 8 = top padding, 6 = bottom margin
+
                     BoxOuter.Size = UDim2.new(1, 0, 0, 20 + TitleOffset + 8 + Size + 6);
                 end;
 
@@ -5605,7 +5791,7 @@ function Library:CreateWindow(...)
                 Tab:AddBlank(3);
                 Tab:Resize();
 
-                -- Show first tab (number is 2 cus of the UIListLayout that also sits in that instance)
+
                 if #TabboxButtons:GetChildren() == 2 then
                     Tab:Show();
                 end;
@@ -5636,7 +5822,7 @@ function Library:CreateWindow(...)
             end;
         end);
 
-        -- This was the first tab added, so we show it by default.
+
         if #TabContainer:GetChildren() == 1 then
             Tab:ShowTab();
         end;
@@ -5674,30 +5860,21 @@ function Library:CreateWindow(...)
         Library:RefreshCustomCursor()
     end
 
-    local Platform = nil;
-    pcall(function()
-        Platform = InputService:GetPlatform();
-    end);
-
-    local IsMobile = InputService.TouchEnabled
-        and (
-            Platform == Enum.Platform.Android
-            or Platform == Enum.Platform.IOS
-            or (not InputService.MouseEnabled and not InputService.KeyboardEnabled)
-        );
+    local IsMobile = InputService.TouchEnabled;
 
     if IsMobile then
         local MobileButtons = Library:Create('Frame', {
+            AutomaticSize = Enum.AutomaticSize.XY;
             BackgroundTransparency = 1;
             Position = UDim2.fromOffset(12, 12);
-            Size = UDim2.fromOffset(150, 38);
+            Size = UDim2.fromOffset(0, 62);
             ZIndex = 100;
             Parent = ScreenGui;
         });
 
         local MobileLayout = Library:Create('UIListLayout', {
             FillDirection = Enum.FillDirection.Horizontal;
-            Padding = UDim.new(0, 8);
+            Padding = UDim.new(0, 14);
             SortOrder = Enum.SortOrder.LayoutOrder;
             Parent = MobileButtons;
         });
@@ -5707,10 +5884,10 @@ function Library:CreateWindow(...)
                 AutoButtonColor = false;
                 BackgroundColor3 = Library.MainColor;
                 BorderColor3 = Library.OutlineColor;
-                Size = UDim2.fromOffset(Width, 34);
+                Size = UDim2.fromOffset(Width + 44, 56);
                 Text = Text;
                 TextColor3 = Library.FontColor;
-                TextSize = 12;
+                TextSize = 17;
                 Font = Library.Font;
                 ZIndex = 102;
                 Parent = MobileButtons;
@@ -5733,9 +5910,15 @@ function Library:CreateWindow(...)
             local ButtonPosition = nil;
             local Dragging = false;
             local Moved = false;
+            local ActiveInput = nil;
+            local IgnoreMouseUntil = 0;
 
             Button.InputBegan:Connect(function(Input)
                 if not Library:IsPrimaryInput(Input) then
+                    return;
+                end;
+
+                if Input.UserInputType == Enum.UserInputType.MouseButton1 and os.clock() < IgnoreMouseUntil then
                     return;
                 end;
 
@@ -5744,6 +5927,7 @@ function Library:CreateWindow(...)
                 ButtonPosition = MobileButtons.Position;
                 Dragging = true;
                 Moved = false;
+                ActiveInput = Input;
             end);
 
             Button.InputChanged:Connect(function(Input)
@@ -5773,10 +5957,33 @@ function Library:CreateWindow(...)
                 end;
 
                 Dragging = false;
+                ActiveInput = nil;
+                if Input.UserInputType == Enum.UserInputType.Touch then
+                    IgnoreMouseUntil = os.clock() + 0.5;
+                end;
                 if not Moved then
                     Callback(Button);
                 end;
             end);
+
+            Library:GiveSignal(InputService.InputChanged:Connect(function(Input)
+                if not Dragging or not ActiveInput or ActiveInput.UserInputType ~= Enum.UserInputType.Touch
+                    or Input ~= ActiveInput then
+                    return;
+                end;
+
+                local X, Y = Library:GetInputPosition(Input);
+                local Delta = Vector2.new(X, Y) - PressPosition;
+                if Delta.Magnitude >= 5 then
+                    Moved = true;
+                end;
+                MobileButtons.Position = UDim2.new(
+                    ButtonPosition.X.Scale,
+                    ButtonPosition.X.Offset + Delta.X,
+                    ButtonPosition.Y.Scale,
+                    ButtonPosition.Y.Offset + Delta.Y
+                );
+            end));
 
             return Button;
         end;
@@ -5793,6 +6000,9 @@ function Library:CreateWindow(...)
 
         Library.MobileButtons = MobileButtons;
         Library.MobileButtonsLayout = MobileLayout;
+        function Library:CreateMobileButton(Text, Width, Callback)
+            return CreateMobileButton(Text, Width, Callback);
+        end;
     end
 
     Library:GiveSignal(InputService.InputBegan:Connect(function(Input, Processed)
