@@ -260,6 +260,67 @@ local function round(num, numDecimalPlaces)
 	return math.floor(num * mult + 0.5) / mult
 end
 
+-- How many decimal places a step size implies (0.001 -> 3, 0.01 -> 2, 0.1 -> 1, >=1 -> 0).
+-- Integer math via round() so float log() never miscounts the digit width.
+local function sliderDecimals(step)
+	if not step or step >= 1 then
+		return 0
+	end
+	return math.max(0, math.floor(math.log(1 / step) / math.log(10) + 0.5))
+end
+
+-- Snap a value onto the step grid and scrub float drift (e.g. 0.30000000000000004 -> 0.3).
+local function snapSlider(value, step)
+	if not step or step <= 0 then
+		return math.floor(value + 0.5)
+	end
+	return round(math.floor(value / step + 0.5) * step, sliderDecimals(step))
+end
+
+-- Display text for a slider value: custom label wins, else fixed-width decimals, else integer.
+local function formatSlider(value, step, custom, suffix)
+	if custom and custom[value] then
+		return custom[value]
+	end
+	local places = sliderDecimals(step)
+	local text
+	if places > 0 then
+		text = string.format("%." .. places .. "f", value)
+	else
+		text = tostring(math.floor(value + 0.5))
+	end
+	return text .. (suffix or "")
+end
+
+-- Reposition a range slider's between-fill + both handles and refresh its label.
+-- Fill/handle left edges MOVE, so we update the stored postable offset (survives menu drags)
+-- as well as the live .Position, matching the list element's offset-update idiom.
+local function RangeSliderVisual(v2)
+	local d = v2[4]
+	local low, high = v2[1][1], v2[1][2]
+	local span = v2[6][2] - v2[6][1]
+	if span == 0 then
+		span = 1
+	end
+	local trackw = d.length - 4
+	local lowratio = (low - v2[6][1]) / span
+	local highratio = (high - v2[6][1]) / span
+	local fillx = d.basex + 2 + trackw * lowratio
+	local fillw = trackw * (highratio - lowratio)
+	for i = 1, 4 do
+		menu.postable[d.fillidx[i]][2] = fillx
+		d[i].Position = Vector2.new(menu.x + fillx, d[i].Position.Y)
+		d[i].Size = Vector2.new(fillw, 2)
+	end
+	local lowx = d.basex + 2 + trackw * lowratio - 1
+	local highx = d.basex + 2 + trackw * highratio - 1
+	menu.postable[d.lowhandleidx][2] = lowx
+	d[7].Position = Vector2.new(menu.x + lowx, d[7].Position.Y)
+	menu.postable[d.highhandleidx][2] = highx
+	d[8].Position = Vector2.new(menu.x + highx, d[8].Position.Y)
+	d[5].Text = formatSlider(low, v2.decimal, v2.custom, "") .. " - " .. formatSlider(high, v2.decimal, v2.custom, d[6])
+end
+
 local function average(t)
 	local sum = 0
 	for _, v in pairs(t) do -- Get the sum of all numbers in t
@@ -483,6 +544,26 @@ NETWORK:SetOutgoingKBPSLimit(0)
 
 setfpscap(maxfps or 144)
 
+-- Config folder. A loader (see SetFolder in "BBOT Ui Example.lua") may override the per-project
+-- config directory via getgenv().BBOT_CONFIG_FOLDER, so different script hubs / games keep their
+-- configs in separate folders (e.g. "MyScriptHub/specific-game"). Defaults to the classic
+-- "bitchbot/<game>" path when no override is supplied.
+menu.configfolder = (getgenv and getgenv().BBOT_CONFIG_FOLDER)
+	or (_G and _G.BBOT_CONFIG_FOLDER)
+	or ("bitchbot/" .. menu.game)
+
+local function ensureConfigFolder()
+	local built = ""
+	for _, seg in ipairs(string.split(menu.configfolder, "/")) do
+		if seg ~= "" then
+			built = built == "" and seg or (built .. "/" .. seg)
+			if not isfolder(built) then
+				makefolder(built)
+			end
+		end
+	end
+end
+
 if not isfolder("bitchbot") then
 	makefolder("bitchbot")
 	if not isfile("bitchbot/relations.bb") then
@@ -495,15 +576,13 @@ else
 	writefile("bitchbot/debuglog.bb", "")
 end
 
-if not isfolder("bitchbot/" .. menu.game) then
-	makefolder("bitchbot/" .. menu.game)
-end
+ensureConfigFolder()
 
 local configs = {}
 
 local function GetConfigs()
 	local result = {}
-	local directory = "bitchbot\\" .. menu.game
+	local directory = menu.configfolder:gsub("/", "\\")
 	for k, v in pairs(listfiles(directory)) do
 		local clipped = v:sub(#directory + 2)
 		if clipped:sub(#clipped - 2) == ".bb" then
@@ -513,7 +592,7 @@ local function GetConfigs()
 		end
 	end
 	if #result <= 0 then
-		writefile("bitchbot/" .. menu.game .. "/Default.bb", "")
+		writefile(menu.configfolder .. "/Default.bb", "")
 	end
 	return result
 end
@@ -1267,16 +1346,73 @@ do
 			stradd = ""
 		end
 
-		local decplaces = rounded and string.rep("0", math.log(1 / rounded) / math.log(10)) or 1
-		if rounded and value == math.floor(value * decplaces) then
-			textstr = tostring(value) .. "." .. decplaces .. stradd
-		else
-			textstr = tostring(value) .. stradd
-		end
-
-		Draw:MenuBigText(customvals[value] or textstr, true, true, x + (length * 0.5), y + 11, tab)
+		Draw:MenuBigText(formatSlider(value, rounded, customvals, stradd), true, true, x + (length * 0.5), y + 11, tab)
 		table.insert(temptable, tab[#tab])
 		table.insert(temptable, stradd)
+		return temptable
+	end
+
+	function Draw:RangeSlider(name, stradd, low, high, minvalue, maxvalue, customvals, rounded, x, y, length, tab)
+		Draw:MenuBigText(name, true, false, x, y - 3, tab)
+
+		for i = 0, 3 do
+			Draw:MenuFilledRect(true, x + 2, y + 14 + (i * 2), length - 4, 2, { 0, 0, 0, 255 }, tab)
+			tab[#tab].Color = ColorRange(
+				i,
+				{ [1] = { start = 0, color = RGB(50, 50, 50) }, [2] = { start = 3, color = RGB(30, 30, 30) } }
+			)
+		end
+
+		local temptable = {}
+		local span = maxvalue - minvalue
+		if span == 0 then
+			span = 1
+		end
+		local lowratio = (low - minvalue) / span
+		local highratio = (high - minvalue) / span
+		local fillx = x + 2 + (length - 4) * lowratio
+		local fillw = (length - 4) * (highratio - lowratio)
+		temptable.fillidx = {}
+		for i = 0, 3 do
+			Draw:MenuFilledRect(true, fillx, y + 14 + (i * 2), fillw, 2, { 0, 0, 0, 255 }, tab)
+			table.insert(temptable, tab[#tab])
+			table.insert(temptable.fillidx, #menu.postable)
+			tab[#tab].Color = ColorRange(i, {
+				[1] = { start = 0, color = RGB(menu.mc[1], menu.mc[2], menu.mc[3]) },
+				[2] = { start = 3, color = RGB(menu.mc[1] - 40, menu.mc[2] - 40, menu.mc[3] - 40) },
+			})
+		end
+
+		Draw:MenuOutlinedRect(true, x, y + 12, length, 12, { 30, 30, 30, 255 }, tab)
+		Draw:MenuOutlinedRect(true, x + 1, y + 13, length - 2, 10, { 0, 0, 0, 255 }, tab)
+
+		if stradd == nil then
+			stradd = ""
+		end
+
+		Draw:MenuFilledRect(true, x + 2 + (length - 4) * lowratio - 1, y + 12, 3, 12, { menu.mc[1], menu.mc[2], menu.mc[3], 255 }, tab)
+		local lowhandle = tab[#tab]
+		local lowhandleidx = #menu.postable
+		Draw:MenuFilledRect(true, x + 2 + (length - 4) * highratio - 1, y + 12, 3, 12, { menu.mc[1], menu.mc[2], menu.mc[3], 255 }, tab)
+		local highhandle = tab[#tab]
+		local highhandleidx = #menu.postable
+
+		Draw:MenuBigText(
+			formatSlider(low, rounded, customvals, "") .. " - " .. formatSlider(high, rounded, customvals, stradd),
+			true,
+			true,
+			x + (length * 0.5),
+			y + 11,
+			tab
+		)
+		temptable[5] = tab[#tab]
+		temptable[6] = stradd
+		temptable[7] = lowhandle
+		temptable[8] = highhandle
+		temptable.basex = x
+		temptable.length = length
+		temptable.lowhandleidx = lowhandleidx
+		temptable.highhandleidx = highhandleidx
 		return temptable
 	end
 
@@ -1713,7 +1849,23 @@ function menu.Initialize(menutable)
 									end
 								end
 								y_pos += 18
-							elseif v2.type == "slider" then
+							elseif v2.type == "keybind" then
+									menu.options[v.name][g_name][v2.name] = {}
+									Draw:MenuBigText(v2.name, true, false, v1.x + 8, v1.y + y_pos - 1, tabz[k])
+									menu.options[v.name][g_name][v2.name].label = tabz[k][#tabz[k]]
+									menu.options[v.name][g_name][v2.name][4] = Draw:Keybind(v2.value, v1.x + v1.width - 52, v1.y + y_pos - 2, tabz[k])
+									menu.options[v.name][g_name][v2.name][1] = v2.value
+									menu.options[v.name][g_name][v2.name][7] = v2.value
+									menu.options[v.name][g_name][v2.name][2] = v2.type
+									menu.options[v.name][g_name][v2.name][3] = { v1.x + v1.width - 52, v1.y + y_pos - 2 }
+									menu.options[v.name][g_name][v2.name][5] = false
+									menu.options[v.name][g_name][v2.name].menukey = v2.menukey or false
+									menu.options[v.name][g_name][v2.name].tooltip = v2.tooltip or nil
+									if v2.menukey then
+										menu.menukey = v2.value
+									end
+									y_pos += 18
+								elseif v2.type == "slider" then
 								menu.options[v.name][g_name][v2.name] = {}
 								menu.options[v.name][g_name][v2.name][4] = Draw:Slider(
 									v2.name,
@@ -1734,6 +1886,32 @@ function menu.Initialize(menutable)
 								menu.options[v.name][g_name][v2.name][5] = false
 								menu.options[v.name][g_name][v2.name][6] = { v2.minvalue, v2.maxvalue }
 								menu.options[v.name][g_name][v2.name][7] = { v1.x + 7 + v1.width - 38, v1.y + y_pos - 1 }
+								menu.options[v.name][g_name][v2.name].decimal = v2.decimal == nil and nil or v2.decimal
+								menu.options[v.name][g_name][v2.name].stepsize = v2.stepsize
+								menu.options[v.name][g_name][v2.name].custom = v2.custom or {}
+
+								y_pos += 30
+							elseif v2.type == "rangeslider" then
+								menu.options[v.name][g_name][v2.name] = {}
+								menu.options[v.name][g_name][v2.name][4] = Draw:RangeSlider(
+									v2.name,
+									v2.stradd,
+									v2.value[1],
+									v2.value[2],
+									v2.minvalue,
+									v2.maxvalue,
+									v2.custom or {},
+									v2.decimal,
+									v1.x + 8,
+									v1.y + y_pos,
+									v1.width - 16,
+									tabz[k]
+								)
+								menu.options[v.name][g_name][v2.name][1] = { v2.value[1], v2.value[2] }
+								menu.options[v.name][g_name][v2.name][2] = v2.type
+								menu.options[v.name][g_name][v2.name][3] = { v1.x + 7, v1.y + y_pos - 1, v1.width - 16 }
+								menu.options[v.name][g_name][v2.name][5] = false
+								menu.options[v.name][g_name][v2.name][6] = { v2.minvalue, v2.maxvalue }
 								menu.options[v.name][g_name][v2.name].decimal = v2.decimal == nil and nil or v2.decimal
 								menu.options[v.name][g_name][v2.name].stepsize = v2.stepsize
 								menu.options[v.name][g_name][v2.name].custom = v2.custom or {}
@@ -2186,7 +2364,21 @@ function menu.Initialize(menutable)
 	ColorpickerOutline(false, 11, 24, 158, 158, { 0, 0, 0, 255 }, cp.drawings)
 	ColorpickerRect(false, 12, 25, 156, 156, { 0, 0, 0, 255 }, cp.drawings)
 	local maincolor = cp.drawings[#cp.drawings]
-	ColorpickerImage(false, BBOT_IMAGES[1], 12, 25, 156, 156, 1, cp.drawings)
+	-- procedural SV gradient (BBOT_IMAGES[1] is a dead imgur link): white->hue saturation strips + transparent->black value overlay
+	cp.sv_sat_strips = {}
+	for i = 0, 51 do
+		ColorpickerRect(false, 12 + i * 3, 25, 3, 156, { 255, 255, 255, 255 }, cp.drawings)
+		table.insert(cp.sv_sat_strips, cp.drawings[#cp.drawings])
+	end
+	for j = 0, 51 do
+		local a = math.floor(255 * (j / 51) + 0.5)
+		ColorpickerRect(false, 12, 25 + j * 3, 156, 3, { 0, 0, 0, a }, cp.drawings)
+	end
+	cp.set_sv_hue = function(h)
+		for i = 0, 51 do
+			cp.sv_sat_strips[i + 1].Color = Color3.fromHSV(h, i / 51, 1)
+		end
+	end
 
 	--https://i.imgur.com/jG3NjxN.png
 	local alphabar = {}
@@ -2194,13 +2386,23 @@ function menu.Initialize(menutable)
 	table.insert(alphabar, cp.drawings[#cp.drawings])
 	ColorpickerOutline(false, 11, 190, 158, 12, { 0, 0, 0, 255 }, cp.drawings)
 	table.insert(alphabar, cp.drawings[#cp.drawings])
-	ColorpickerImage(false, BBOT_IMAGES[2], 12, 191, 159, 10, 1, cp.drawings)
-	table.insert(alphabar, cp.drawings[#cp.drawings])
+	-- procedural alpha bar (BBOT_IMAGES[2] is a dead imgur link): current color, transparent(left)->opaque(right)
+	cp.alpha_strips = {}
+	for i = 0, 52 do
+		local a = math.floor(255 * (i / 52) + 0.5)
+		ColorpickerRect(false, 12 + i * 3, 191, 3, 10, { 255, 255, 255, a }, cp.drawings)
+		table.insert(alphabar, cp.drawings[#cp.drawings])
+		table.insert(cp.alpha_strips, cp.drawings[#cp.drawings])
+	end
 
 	ColorpickerOutline(false, 176, 23, 14, 160, { 30, 30, 30, 255 }, cp.drawings)
 	ColorpickerOutline(false, 177, 24, 12, 158, { 0, 0, 0, 255 }, cp.drawings)
 	--https://i.imgur.com/2Ty4u2O.png
-	ColorpickerImage(false, BBOT_IMAGES[3], 178, 25, 10, 156, 1, cp.drawings)
+	-- procedural hue bar (BBOT_IMAGES[3] is a dead imgur link)
+	for j = 0, 51 do
+		ColorpickerRect(false, 178, 25 + j * 3, 10, 3, { 0, 0, 0, 255 }, cp.drawings)
+		cp.drawings[#cp.drawings].Color = Color3.fromHSV(1 - (j / 51), 1, 1)
+	end
 
 	ColorpickerText("New Color", false, false, 198, 23, cp.drawings)
 	ColorpickerOutline(false, 197, 37, 75, 40, { 30, 30, 30, 255 }, cp.drawings)
@@ -2235,6 +2437,11 @@ function menu.Initialize(menutable)
 			newcolor.Transparency = a / 255
 		else
 			newcolor.Transparency = 1
+		end
+		if cp.alpha_strips then
+			for _, strip in ipairs(cp.alpha_strips) do
+				strip.Color = RGB(r, g, b)
+			end
 		end
 	end
 
@@ -2329,6 +2536,7 @@ function menu.Initialize(menutable)
 
 			applytext.Position = Vector2.new(235 + cp.x, cp.y + cp.h - 23)
 			maincolor.Color = Color3.fromHSV(h, 1, 1)
+			if cp.set_sv_hue then cp.set_sv_hue(h) end
 			cp.drawings[7].Text = text
 		end
 	end
@@ -2538,6 +2746,18 @@ function menu.Initialize(menutable)
 								},
 							})
 						end
+					elseif v2[2] == "rangeslider" then
+						for i = 0, 3 do
+							v2[4][i + 1].Color = ColorRange(i, {
+								[1] = { start = 0, color = RGB(menucolor[1], menucolor[2], menucolor[3]) },
+								[2] = {
+									start = 3,
+									color = RGB(menucolor[1] - 40, menucolor[2] - 40, menucolor[3] - 40),
+								},
+							})
+						end
+						v2[4][7].Color = RGB(menucolor[1], menucolor[2], menucolor[3])
+						v2[4][8].Color = RGB(menucolor[1], menucolor[2], menucolor[3])
 					end
 				end
 			end
@@ -2556,6 +2776,9 @@ function menu.Initialize(menutable)
 
 	menu.keybind_open = nil
 
+	menu.menukey = menu.menukey or Enum.KeyCode.Insert -- key that opens/closes the menu (a "keybind" element with menukey=true sets this at creation; Insert is the fallback)
+	menu.capturing_menukey = false -- true while the user is picking a new menu key, so the press isn't treated as open/close
+
 	menu.dropbox_open = nil
 
 	menu.colorpicker_open = false
@@ -2563,7 +2786,7 @@ function menu.Initialize(menutable)
 	menu.textboxopen = nil
 
 	function menu:InputBeganMenu(key) --ANCHOR menu input
-		if key.KeyCode == Enum.KeyCode.RightShift and not loadingthing.Visible then
+		if key.KeyCode == menu.menukey and not menu.capturing_menukey and not loadingthing.Visible then
 			cp.dragging_m = false
 			cp.dragging_r = false
 			cp.dragging_b = false
@@ -2574,7 +2797,7 @@ function menu.Initialize(menutable)
 					local v = menu.options[k]
 					for k1, v1 in pairs(v) do
 						for k2, v2 in pairs(v1) do
-							if v2[2] == "slider" and v2[5] then
+							if (v2[2] == "slider" or v2[2] == "rangeslider") and v2[5] then
 								v2[5] = false
 							elseif v2[2] == "dropbox" and v2[5] then
 								v2[5] = false
@@ -2657,7 +2880,18 @@ function menu.Initialize(menutable)
 									v2[5][5] = false
 								end
 							end
-						elseif v2[2] == "textbox" then --ANCHOR TEXTBOXES
+						elseif v2[2] == "keybind" then
+								if v2[5] and key.KeyCode.Value ~= 0 then
+									v2[4][2].Color = RGB(30, 30, 30)
+									v2[4][1].Text = KeyEnumToName(key.KeyCode)
+									v2[1] = key.KeyCode
+									v2[5] = false
+									if v2.menukey then
+										menu.menukey = key.KeyCode
+										menu.capturing_menukey = false
+									end
+								end
+							elseif v2[2] == "textbox" then --ANCHOR TEXTBOXES
 							if v2[5] then
 								if not INPUT_SERVICE:IsKeyDown(Enum.KeyCode.LeftControl) then
 									if string.len(v2[1]) <= 28 then
@@ -2844,6 +3078,17 @@ function menu.Initialize(menutable)
 			end
 			figgy = figgy .. "}\n"
 		end
+		figgy = figgy .. "rangesliders {\n"
+		for k, v in pairs(menu.options) do
+			for k1, v1 in pairs(v) do
+				for k2, v2 in pairs(v1) do
+					if v2[2] == "rangeslider" then
+						figgy = figgy .. k .. "|" .. k1 .. "|" .. k2 .. "|" .. tostring(v2[1][1]) .. "," .. tostring(v2[1][2]) .. "\n"
+					end
+				end
+			end
+		end
+		figgy = figgy .. "}\n"
 		figgy = figgy .. "comboboxes {\n"
 		for k, v in pairs(menu.options) do
 			for k1, v1 in pairs(v) do
@@ -3091,6 +3336,34 @@ function menu.Initialize(menutable)
 
 			local start = nil
 			for i, v in next, lines do
+				if v == "rangesliders {" then
+					start = i
+					break
+				end
+			end
+			if start ~= nil then
+				local end_ = nil
+				for i, v in next, lines do
+					if i > start and v == "}" then
+						end_ = i
+						break
+					end
+				end
+				for i = 1, end_ - start - 1 do
+					local tt = string.split(lines[i + start], "|")
+					if menu.options[tt[1]] ~= nil and menu.options[tt[1]][tt[2]] ~= nil and menu.options[tt[1]][tt[2]][tt[3]] ~= nil then
+						local subs = string.split(tt[4], ",")
+						local lo = tonumber(subs[1])
+						local hi = tonumber(subs[2])
+						if lo ~= nil and hi ~= nil then
+							menu.options[tt[1]][tt[2]][tt[3]][1][1] = lo
+							menu.options[tt[1]][tt[2]][tt[3]][1][2] = hi
+						end
+					end
+				end
+			end
+			local start = nil
+			for i, v in next, lines do
 				if v == "keybinds {" then
 					start = i
 					break
@@ -3237,16 +3510,29 @@ function menu.Initialize(menutable)
 								v2[1] = v2[6][2]
 							end
 
-							local decplaces = v2.decimal and string.rep("0", math.log(1 / v2.decimal) / math.log(10))
-							if decplaces and math.abs(v2[1]) < v2.decimal then
-								v2[1] = 0
-							end
-							v2[4][5].Text = v2.custom[v2[1]] or (v2[1] == math.floor(v2[1]) and v2.decimal) and tostring(v2[1]) .. "." .. decplaces .. v2[4][6] or tostring(v2[1]) .. v2[4][6]
-							-- v2[4][5].Text = tostring(v2[1]).. v2[4][6]
+							v2[1] = snapSlider(v2[1], v2.decimal)
+							v2[4][5].Text = formatSlider(v2[1], v2.decimal, v2.custom, v2[4][6])
 
 							for i = 1, 4 do
 								v2[4][i].Size = Vector2.new((v2[3][3] - 4) * ((v2[1] - v2[6][1]) / (v2[6][2] - v2[6][1])), 2)
 							end
+						elseif v2[2] == "rangeslider" then
+							if v2[1][1] < v2[6][1] then
+								v2[1][1] = v2[6][1]
+							elseif v2[1][1] > v2[6][2] then
+								v2[1][1] = v2[6][2]
+							end
+							if v2[1][2] < v2[6][1] then
+								v2[1][2] = v2[6][1]
+							elseif v2[1][2] > v2[6][2] then
+								v2[1][2] = v2[6][2]
+							end
+							if v2[1][1] > v2[1][2] then
+								v2[1][1] = v2[1][2]
+							end
+							v2[1][1] = snapSlider(v2[1][1], v2.decimal)
+							v2[1][2] = snapSlider(v2[1][2], v2.decimal)
+							RangeSliderVisual(v2)
 						elseif v2[2] == "dropbox" then
 							if v2[6][v2[1]] == nil then
 								v2[1] = 1
@@ -3280,8 +3566,7 @@ function menu.Initialize(menutable)
 	function menu.saveconfig()
 		local figgy = SaveCurSettings()
 		writefile(
-			"bitchbot/"
-				.. menu.game
+			menu.configfolder
 				.. "/"
 				.. menu.options["Settings"]["Configuration"]["ConfigName"][1]
 				.. ".bb",
@@ -3292,8 +3577,7 @@ function menu.Initialize(menutable)
 	end
 	
 	function menu.loadconfig()
-		local configname = "bitchbot/"
-			.. menu.game
+		local configname = menu.configfolder
 			.. "/"
 			.. menu.options["Settings"]["Configuration"]["ConfigName"][1]
 			.. ".bb"
@@ -3345,8 +3629,7 @@ function menu.Initialize(menutable)
 			menu.saveconfig()
 		elseif bp == menu.options["Settings"]["Configuration"]["Delete Config"] then
 			delfile(
-				"bitchbot/"
-					.. menu.game
+				menu.configfolder
 					.. "/"
 					.. menu.options["Settings"]["Configuration"]["ConfigName"][1]
 					.. ".bb"
@@ -3744,14 +4027,19 @@ function menu.Initialize(menutable)
 											end
 										end
 									end
-								elseif v2[2] == "slider" and not menu.dropbox_open then
-									if menu:MouseInMenu(v2[7][1], v2[7][2], 22, 13) then
-										local stepval = 1
-										if v2.stepsize then
-											stepval = v2.stepsize
+								elseif v2[2] == "keybind" and not menu.dropbox_open then
+										if menu:MouseInMenu(v2[3][1], v2[3][2], 44, 16) then
+											v2[4][2].Color = RGB(menu.mc[1], menu.mc[2], menu.mc[3])
+											v2[5] = true
+											if v2.menukey then
+												menu.capturing_menukey = true
+											end
 										end
+									elseif v2[2] == "slider" and not menu.dropbox_open then
+									if menu:MouseInMenu(v2[7][1], v2[7][2], 22, 13) then
+										local stepval = v2.stepsize or v2.decimal or 1
 										if menu:modkeydown("shift", "left") then
-											stepval = 0.1
+											stepval = v2.decimal or 0.1
 										end
 										if menu:MouseInMenu(v2[7][1], v2[7][2], 11, 13) then
 											v2[1] -= stepval
@@ -3759,16 +4047,13 @@ function menu.Initialize(menutable)
 											v2[1] += stepval
 										end
 
+										v2[1] = snapSlider(v2[1], v2.decimal)
 										if v2[1] < v2[6][1] then
 											v2[1] = v2[6][1]
 										elseif v2[1] > v2[6][2] then
 											v2[1] = v2[6][2]
 										end
-										local decplaces = v2.decimal and string.rep("0", math.log(1 / v2.decimal) / math.log(10))
-										if decplaces and math.abs(v2[1]) < v2.decimal then
-											v2[1] = 0
-										end
-										v2[4][5].Text = v2.custom[v2[1]] or (v2[1] == math.floor(v2[1]) and v2.decimal) and tostring(v2[1]) .. "." .. decplaces .. v2[4][6] or tostring(v2[1]) .. v2[4][6]
+										v2[4][5].Text = formatSlider(v2[1], v2.decimal, v2.custom, v2[4][6])
 
 										for i = 1, 4 do
 											v2[4][i].Size = Vector2.new(
@@ -3778,6 +4063,17 @@ function menu.Initialize(menutable)
 										end
 									elseif menu:MouseInMenu(v2[3][1], v2[3][2], v2[3][3], 28) then
 										v2[5] = true
+									end
+								elseif v2[2] == "rangeslider" and not menu.dropbox_open then
+									if menu:MouseInMenu(v2[3][1], v2[3][2], v2[3][3], 28) then
+										local d = v2[4]
+										local trackw = d.length - 4
+										local clickval = v2[6][1] + ((LOCAL_MOUSE.x - menu.x - (d.basex + 2)) / trackw) * (v2[6][2] - v2[6][1])
+										if math.abs(clickval - v2[1][1]) <= math.abs(clickval - v2[1][2]) then
+											v2[5] = 1
+										else
+											v2[5] = 2
+										end
 									end
 								elseif v2[2] == "dropbox" then
 									if menu.dropbox_open then
@@ -4000,7 +4296,7 @@ function menu.Initialize(menutable)
 			if menu.tabnames[menu.activetab] == k then
 				for k1, v1 in pairs(v) do
 					for k2, v2 in pairs(v1) do
-						if v2[2] == "slider" and v2[5] then
+						if (v2[2] == "slider" or v2[2] == "rangeslider") and v2[5] then
 							v2[5] = false
 						end
 						if v2[2] == "button" and v2[1] then
@@ -4235,20 +4531,14 @@ function menu.Initialize(menutable)
 													- v2[3][1]
 												) / v2[3][3]
 											)
-										v2[1] = (
-												not v2.decimal and math.floor(new_val) or math.floor(new_val / v2.decimal) * v2.decimal
-											) + v2[6][1]
+										v2[1] = snapSlider(new_val + v2[6][1], v2.decimal)
 										if v2[1] < v2[6][1] then
 											v2[1] = v2[6][1]
 										elseif v2[1] > v2[6][2] then
 											v2[1] = v2[6][2]
 										end
-										local decplaces = v2.decimal and string.rep("0", math.log(1 / v2.decimal) / math.log(10))
-										if decplaces and math.abs(v2[1]) < v2.decimal then
-											v2[1] = 0
-										end
 
-										v2[4][5].Text = v2.custom[v2[1]] or (v2[1] == math.floor(v2[1]) and v2.decimal) and tostring(v2[1]) .. "." .. decplaces .. v2[4][6] or tostring(v2[1]) .. v2[4][6]
+										v2[4][5].Text = formatSlider(v2[1], v2.decimal, v2.custom, v2[4][6])
 										for i = 1, 4 do
 											v2[4][i].Size = Vector2.new(
 												(v2[3][3] - 4) * ((v2[1] - v2[6][1]) / (v2[6][2] - v2[6][1])),
@@ -4270,6 +4560,27 @@ function menu.Initialize(menutable)
 												end
 											end
 										end
+									end
+								elseif v2[2] == "rangeslider" then
+									if v2[5] == 1 or v2[5] == 2 then
+										local d = v2[4]
+										local trackw = d.length - 4
+										local ratio = (LOCAL_MOUSE.x - menu.x - (d.basex + 2)) / trackw
+										local new_val = snapSlider(v2[6][1] + ratio * (v2[6][2] - v2[6][1]), v2.decimal)
+										if new_val < v2[6][1] then
+											new_val = v2[6][1]
+										elseif new_val > v2[6][2] then
+											new_val = v2[6][2]
+										end
+										v2[1][v2[5]] = new_val
+										if v2[1][1] > v2[1][2] then
+											if v2[5] == 1 then
+												v2[1][1] = v2[1][2]
+											else
+												v2[1][2] = v2[1][1]
+											end
+										end
+										RangeSliderVisual(v2)
 									end
 								elseif v2[2] == "list" then
 									for k3, v3 in pairs(v2[4].liststuff) do
@@ -4399,6 +4710,7 @@ function menu.Initialize(menutable)
 						)
 
 					cp.hsv.h = 1 - ((clamp(LOCAL_MOUSE.y + GUI_INSET, cp.y + 23, cp.y + 178) - cp.y - 23) / 155)
+						if cp.set_sv_hue then cp.set_sv_hue(cp.hsv.h) end
 					newcolor.Color = Color3.fromHSV(cp.hsv.h, cp.hsv.s, cp.hsv.v)
 				elseif cp.dragging_b then
 					set_dragbar_b(clamp(LOCAL_MOUSE.x, cp.x + 10, cp.x + 168), cp.y + 188)
