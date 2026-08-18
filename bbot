@@ -620,6 +620,15 @@ end)
 
 local LOCAL_PLAYER = Players.LocalPlayer
 local LOCAL_MOUSE = LOCAL_PLAYER:GetMouse()
+local GUI_INSET = 36
+do
+	local ok, inset = pcall(function()
+		return game:GetService("GuiService"):GetGuiInset()
+	end)
+	if ok and inset then
+		GUI_INSET = inset.Y
+	end
+end
 local TEAMS = game:GetService("Teams")
 local INPUT_SERVICE = game:GetService("UserInputService")
 local GAME_SETTINGS = UserSettings():GetService("UserGameSettings")
@@ -2730,15 +2739,15 @@ function menu.Initialize(menutable)
 	end
 
 	function menu:MouseInArea(x, y, width, height)
-		return LOCAL_MOUSE.x > x and LOCAL_MOUSE.x < x + width and LOCAL_MOUSE.y > 36 + y and LOCAL_MOUSE.y < 36 + y + height
+		return LOCAL_MOUSE.x > x and LOCAL_MOUSE.x < x + width and LOCAL_MOUSE.y > GUI_INSET + y and LOCAL_MOUSE.y < GUI_INSET + y + height
 	end
 
 	function menu:MouseInMenu(x, y, width, height)
-		return LOCAL_MOUSE.x > menu.x + x and LOCAL_MOUSE.x < menu.x + x + width and LOCAL_MOUSE.y > menu.y - 36 + y and LOCAL_MOUSE.y < menu.y - 36 + y + height
+		return LOCAL_MOUSE.x > menu.x + x and LOCAL_MOUSE.x < menu.x + x + width and LOCAL_MOUSE.y > menu.y - GUI_INSET + y and LOCAL_MOUSE.y < menu.y - GUI_INSET + y + height
 	end
 
 	function menu:MouseInColorPicker(x, y, width, height)
-		return LOCAL_MOUSE.x > cp.x + x and LOCAL_MOUSE.x < cp.x + x + width and LOCAL_MOUSE.y > cp.y - 36 + y and LOCAL_MOUSE.y < cp.y - 36 + y + height
+		return LOCAL_MOUSE.x > cp.x + x and LOCAL_MOUSE.x < cp.x + x + width and LOCAL_MOUSE.y > cp.y - GUI_INSET + y and LOCAL_MOUSE.y < cp.y - GUI_INSET + y + height
 	end
 
 	local keyz = {}
@@ -3690,7 +3699,7 @@ function menu.Initialize(menutable)
 														true,
 														v2[5][6],
 														LOCAL_MOUSE.x,
-														LOCAL_MOUSE.y + 36
+														LOCAL_MOUSE.y + GUI_INSET
 													)
 												else
 													set_colorpicker(
@@ -3700,7 +3709,7 @@ function menu.Initialize(menutable)
 														false,
 														v2[5][6],
 														LOCAL_MOUSE.x,
-														LOCAL_MOUSE.y + 36
+														LOCAL_MOUSE.y + GUI_INSET
 													)
 												end
 											end
@@ -3718,7 +3727,7 @@ function menu.Initialize(menutable)
 															true,
 															v3[6],
 															LOCAL_MOUSE.x,
-															LOCAL_MOUSE.y + 36
+															LOCAL_MOUSE.y + GUI_INSET
 														)
 													else
 														set_colorpicker(
@@ -3728,7 +3737,7 @@ function menu.Initialize(menutable)
 															false,
 															v3[6],
 															LOCAL_MOUSE.x,
-															LOCAL_MOUSE.y + 36
+															LOCAL_MOUSE.y + GUI_INSET
 														)
 													end
 												end
@@ -4329,8 +4338,8 @@ function menu.Initialize(menutable)
 					end
 				end
 			end
-			menu.inmenu = LOCAL_MOUSE.x > menu.x and LOCAL_MOUSE.x < menu.x + menu.w and LOCAL_MOUSE.y > menu.y - 32 and LOCAL_MOUSE.y < menu.y + menu.h
-			menu.inmiddlemenu = LOCAL_MOUSE.x > menu.x + 9 and LOCAL_MOUSE.x < menu.x + menu.w - 9 and LOCAL_MOUSE.y > menu.y - 9 and LOCAL_MOUSE.y < menu.y + menu.h - 47
+			menu.inmenu = LOCAL_MOUSE.x > menu.x and LOCAL_MOUSE.x < menu.x + menu.w and LOCAL_MOUSE.y > menu.y - GUI_INSET + 4 and LOCAL_MOUSE.y < menu.y + menu.h - GUI_INSET
+			menu.inmiddlemenu = LOCAL_MOUSE.x > menu.x + 9 and LOCAL_MOUSE.x < menu.x + menu.w - 9 and LOCAL_MOUSE.y > menu.y - GUI_INSET + 27 and LOCAL_MOUSE.y < menu.y + menu.h - 47 - GUI_INSET
 			if (
 					--[[(
 						LOCAL_MOUSE.x > menu.x and LOCAL_MOUSE.x < menu.x + menu.w and LOCAL_MOUSE.y > menu.y - 32 and LOCAL_MOUSE.y < menu.y - 11
@@ -4344,11 +4353,11 @@ function menu.Initialize(menutable)
 				if menu.mousedown then
 					if not menu.dragging then
 						clickspot_x = LOCAL_MOUSE.x
-						clickspot_y = LOCAL_MOUSE.y - 36 original_menu_X = menu.x original_menu_y = menu.y
+						clickspot_y = LOCAL_MOUSE.y - GUI_INSET original_menu_X = menu.x original_menu_y = menu.y
 						menu.dragging = true
 					end
 					menu.x = (original_menu_X - clickspot_x) + LOCAL_MOUSE.x
-					menu.y = (original_menu_y - clickspot_y) + LOCAL_MOUSE.y - 36
+					menu.y = (original_menu_y - clickspot_y) + LOCAL_MOUSE.y - GUI_INSET
 					if menu.y < 0 then
 						menu.y = 0
 					end
@@ -4374,22 +4383,22 @@ function menu.Initialize(menutable)
 				if cp.dragging_m then
 					set_dragbar_m(
 						clamp(LOCAL_MOUSE.x, cp.x + 12, cp.x + 167) - 2,
-						clamp(LOCAL_MOUSE.y + 36, cp.y + 25, cp.y + 180) - 2
+						clamp(LOCAL_MOUSE.y + GUI_INSET, cp.y + 25, cp.y + 180) - 2
 					)
 
 					cp.hsv.s = (clamp(LOCAL_MOUSE.x, cp.x + 12, cp.x + 167) - cp.x - 12) / 155
-					cp.hsv.v = 1 - ((clamp(LOCAL_MOUSE.y + 36, cp.y + 23, cp.y + 178) - cp.y - 23) / 155)
+					cp.hsv.v = 1 - ((clamp(LOCAL_MOUSE.y + GUI_INSET, cp.y + 23, cp.y + 178) - cp.y - 23) / 155)
 					newcolor.Color = Color3.fromHSV(cp.hsv.h, cp.hsv.s, cp.hsv.v)
 				elseif cp.dragging_r then
-					set_dragbar_r(cp.x + 175, clamp(LOCAL_MOUSE.y + 36, cp.y + 23, cp.y + 178))
+					set_dragbar_r(cp.x + 175, clamp(LOCAL_MOUSE.y + GUI_INSET, cp.y + 23, cp.y + 178))
 
 					maincolor.Color = Color3.fromHSV(
-							1 - ((clamp(LOCAL_MOUSE.y + 36, cp.y + 23, cp.y + 178) - cp.y - 23) / 155),
+							1 - ((clamp(LOCAL_MOUSE.y + GUI_INSET, cp.y + 23, cp.y + 178) - cp.y - 23) / 155),
 							1,
 							1
 						)
 
-					cp.hsv.h = 1 - ((clamp(LOCAL_MOUSE.y + 36, cp.y + 23, cp.y + 178) - cp.y - 23) / 155)
+					cp.hsv.h = 1 - ((clamp(LOCAL_MOUSE.y + GUI_INSET, cp.y + 23, cp.y + 178) - cp.y - 23) / 155)
 					newcolor.Color = Color3.fromHSV(cp.hsv.h, cp.hsv.s, cp.hsv.v)
 				elseif cp.dragging_b then
 					set_dragbar_b(clamp(LOCAL_MOUSE.x, cp.x + 10, cp.x + 168), cp.y + 188)
