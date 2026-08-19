@@ -123,7 +123,7 @@ do
 							drawing.Position = Vector2.new(locRect.x + linenum, locRect.y + 1)
 							if menu then
 								local mencol = customcolor or (
-										Color3.fromRGB(127, 72, 163)
+										Color3.fromRGB(235, 45, 45)
 									)
 								local color = linenum == 1 and mencol or Color3.fromRGB(mencol.R * 255 - 40, mencol.G * 255 - 40, mencol.B * 255 - 40) -- super shit
 								if drawing.Color ~= color then
@@ -158,7 +158,7 @@ do
 			local c = 0.28 - i / 80
 			Note.drawings[i] = Rectangle(200, 1, true, Color3.new(c, c, c))
 		end
-		local color =  Color3.fromRGB(127, 72, 163)
+		local color =  Color3.fromRGB(235, 45, 45)
 
 		Note.drawings.text = Text(t)
 		if Note.drawings.text.TextBounds.x + 7 > Note.size.x then -- expand the note size to fit if it's less than the default size
@@ -208,6 +208,8 @@ menu = { -- this is for menu stuffs n shi
 		right = (menuWidth - 20) / 2 + 13,
 	},
 	activetab = 1,
+	scroll = {},
+	scrollmax = {},
 	open = true,
 	fadestart = 0,
 	fading = false,
@@ -219,7 +221,7 @@ menu = { -- this is for menu stuffs n shi
 		dark = {},
 		togz = {},
 	},
-	mc = { 127, 72, 163 },
+	mc = { 235, 45, 45 },
 	watermark = {},
 	connections = {},
 	list = {},
@@ -290,6 +292,42 @@ local function formatSlider(value, step, custom, suffix)
 		text = tostring(math.floor(value + 0.5))
 	end
 	return text .. (suffix or "")
+end
+
+-- Key Time (Lua Prot whitelist): read the LP_TIMELEFT runtime global safely.
+-- Lua Prot injects LP_TIMELEFT (seconds until the key expires; 0 = never expires) as a
+-- runtime GLOBAL, so it is visible across the loadstring boundary through the shared
+-- executor environment. We only ever READ it — overwriting a Lua Prot runtime var crashes
+-- the VM. Returns nil when running unobfuscated with no dev stub (the docs' stub sets it to 0).
+local function getKeyTimeSeconds()
+	local env = (getgenv and getgenv()) or _G
+	local v = env and rawget(env, "LP_TIMELEFT")
+	if v == nil then
+		v = LP_TIMELEFT -- fall back to a direct global reference (nil-safe in Lua)
+	end
+	return tonumber(v)
+end
+
+-- Format a whitelist key's remaining seconds as compact time (e.g. "30d 5h", "1h 2m", "45s").
+local function formatKeyTime(secs)
+	if secs == nil then
+		return "N/A"
+	end
+	if secs <= 0 then
+		return "Lifetime"
+	end
+	local d = math.floor(secs / 86400)
+	local h = math.floor((secs % 86400) / 3600)
+	local m = math.floor((secs % 3600) / 60)
+	local s = math.floor(secs % 60)
+	if d > 0 then
+		return d .. "d " .. h .. "h"
+	elseif h > 0 then
+		return h .. "h " .. m .. "m"
+	elseif m > 0 then
+		return m .. "m " .. s .. "s"
+	end
+	return s .. "s"
 end
 
 -- Reposition a range slider's between-fill + both handles and refresh its label.
@@ -1124,7 +1162,7 @@ do
 
 	function Draw:MenuOutlinedRect(visible, pos_x, pos_y, width, height, clr, tablename)
 		Draw:OutlinedRect(visible, pos_x + menu.x, pos_y + menu.y, width, height, clr, tablename)
-		table.insert(menu.postable, { tablename[#tablename], pos_x, pos_y })
+		table.insert(menu.postable, { tablename[#tablename], pos_x, pos_y, menu.building_tab, height, "rect" })
 
 		if menu.log_multi ~= nil then
 			table.insert(menu.mgrouptabz[menu.log_multi[1]][menu.log_multi[2]], tablename[#tablename])
@@ -1133,7 +1171,7 @@ do
 
 	function Draw:MenuFilledRect(visible, pos_x, pos_y, width, height, clr, tablename)
 		Draw:FilledRect(visible, pos_x + menu.x, pos_y + menu.y, width, height, clr, tablename)
-		table.insert(menu.postable, { tablename[#tablename], pos_x, pos_y })
+		table.insert(menu.postable, { tablename[#tablename], pos_x, pos_y, menu.building_tab, height, "rect" })
 
 		if menu.log_multi ~= nil then
 			table.insert(menu.mgrouptabz[menu.log_multi[1]][menu.log_multi[2]], tablename[#tablename])
@@ -1142,7 +1180,7 @@ do
 
 	function Draw:MenuImage(visible, imagedata, pos_x, pos_y, width, height, transparency, tablename)
 		Draw:Image(visible, imagedata, pos_x + menu.x, pos_y + menu.y, width, height, transparency, tablename)
-		table.insert(menu.postable, { tablename[#tablename], pos_x, pos_y })
+		table.insert(menu.postable, { tablename[#tablename], pos_x, pos_y, menu.building_tab, height, "rect" })
 
 		if menu.log_multi ~= nil then
 			table.insert(menu.mgrouptabz[menu.log_multi[1]][menu.log_multi[2]], tablename[#tablename])
@@ -1162,7 +1200,7 @@ do
 			{ 0, 0, 0 },
 			tablename
 		)
-		table.insert(menu.postable, { tablename[#tablename], pos_x, pos_y })
+		table.insert(menu.postable, { tablename[#tablename], pos_x, pos_y, menu.building_tab, 13, "text" })
 
 		if menu.log_multi ~= nil then
 			table.insert(menu.mgrouptabz[menu.log_multi[1]][menu.log_multi[2]], tablename[#tablename])
@@ -1174,9 +1212,9 @@ do
 	function Draw:CoolBox(name, x, y, width, height, tab)
 		Draw:MenuOutlinedRect(true, x, y, width, height, { 0, 0, 0, 255 }, tab)
 		Draw:MenuOutlinedRect(true, x + 1, y + 1, width - 2, height - 2, { 20, 20, 20, 255 }, tab)
-		Draw:MenuOutlinedRect(true, x + 2, y + 2, width - 3, 1, { 127, 72, 163, 255 }, tab)
+		Draw:MenuOutlinedRect(true, x + 2, y + 2, width - 3, 1, { 235, 45, 45, 255 }, tab)
 		table.insert(menu.clrs.norm, tab[#tab])
-		Draw:MenuOutlinedRect(true, x + 2, y + 3, width - 3, 1, { 87, 32, 123, 255 }, tab)
+		Draw:MenuOutlinedRect(true, x + 2, y + 3, width - 3, 1, { 195, 5, 5, 255 }, tab)
 		table.insert(menu.clrs.dark, tab[#tab])
 		Draw:MenuOutlinedRect(true, x + 2, y + 4, width - 3, 1, { 20, 20, 20, 255 }, tab)
 
@@ -1194,9 +1232,9 @@ do
 	function Draw:CoolMultiBox(names, x, y, width, height, tab)
 		Draw:MenuOutlinedRect(true, x, y, width, height, { 0, 0, 0, 255 }, tab)
 		Draw:MenuOutlinedRect(true, x + 1, y + 1, width - 2, height - 2, { 20, 20, 20, 255 }, tab)
-		Draw:MenuOutlinedRect(true, x + 2, y + 2, width - 3, 1, { 127, 72, 163, 255 }, tab)
+		Draw:MenuOutlinedRect(true, x + 2, y + 2, width - 3, 1, { 235, 45, 45, 255 }, tab)
 		table.insert(menu.clrs.norm, tab[#tab])
-		Draw:MenuOutlinedRect(true, x + 2, y + 3, width - 3, 1, { 87, 32, 123, 255 }, tab)
+		Draw:MenuOutlinedRect(true, x + 2, y + 3, width - 3, 1, { 195, 5, 5, 255 }, tab)
 		table.insert(menu.clrs.dark, tab[#tab])
 		Draw:MenuOutlinedRect(true, x + 2, y + 4, width - 3, 1, { 20, 20, 20, 255 }, tab)
 
@@ -1650,11 +1688,25 @@ local loadingthing = Draw:OutlinedText(
 function menu.Initialize(menutable)
 	local bbmenu = {} -- this one is for the rendering n shi
 	do
+		-- UI GLOW (accent halo behind the main window): a stack of concentric 1px accent-colored
+		-- outlines expanding outward from the frame, fading with distance for a soft glow. Built here
+		-- (before the frame) so it renders BEHIND it. Its own table (not bbmenu) so the open/close
+		-- alpha fade never flattens the per-layer gradient; added to menu.clrs.norm so it always
+		-- matches the accent. Position/visibility/fade are driven per-frame (see the render loop).
+		menu.glow = { rects = {}, base = {}, n = 12 }
+		for i = 1, menu.glow.n do
+			local a = math.floor(120 * (menu.glow.n - i + 1) / menu.glow.n)
+			Draw:OutlinedRect(true, menu.x - i, menu.y - i, menu.w + i * 2, menu.h + i * 2, { 235, 45, 45, a }, menu.glow.rects)
+			local d = menu.glow.rects[#menu.glow.rects]
+			d.Visible = false
+			table.insert(menu.clrs.norm, d)
+			menu.glow.base[i] = a / 255
+		end
 		Draw:MenuOutlinedRect(true, 0, 0, menu.w, menu.h, { 0, 0, 0, 255 }, bbmenu) -- first gradent or whatever
 		Draw:MenuOutlinedRect(true, 1, 1, menu.w - 2, menu.h - 2, { 20, 20, 20, 255 }, bbmenu)
-		Draw:MenuOutlinedRect(true, 2, 2, menu.w - 3, 1, { 127, 72, 163, 255 }, bbmenu)
+		Draw:MenuOutlinedRect(true, 2, 2, menu.w - 3, 1, { 235, 45, 45, 255 }, bbmenu)
 		table.insert(menu.clrs.norm, bbmenu[#bbmenu])
-		Draw:MenuOutlinedRect(true, 2, 3, menu.w - 3, 1, { 87, 32, 123, 255 }, bbmenu)
+		Draw:MenuOutlinedRect(true, 2, 3, menu.w - 3, 1, { 195, 5, 5, 255 }, bbmenu)
 		table.insert(menu.clrs.dark, bbmenu[#bbmenu])
 		Draw:MenuOutlinedRect(true, 2, 4, menu.w - 3, 1, { 20, 20, 20, 255 }, bbmenu)
 
@@ -1669,11 +1721,19 @@ function menu.Initialize(menutable)
 
 		Draw:MenuBigText(MenuName or "Bitch Bot", true, false, 6, 6, bbmenu)
 
+		-- Key Time (top-right of the title bar): shows time left on the Lua Prot whitelist key.
+		-- Centered so it stays put as the value shrinks (30d -> 1h -> 45s); accent-colored + in
+		-- clrs.norm so it follows the menu accent, and in postable so it moves when the menu drags.
+		Draw:OutlinedText("Key Time: --", 2, true, menu.w - 70 + menu.x, 7 + menu.y, 13, true, { 235, 45, 45, 255 }, { 0, 0, 0 }, bbmenu)
+		menu.keytime = bbmenu[#bbmenu]
+		table.insert(menu.clrs.norm, bbmenu[#bbmenu])
+		table.insert(menu.postable, { bbmenu[#bbmenu], menu.w - 70, 7 })
+
 		Draw:MenuOutlinedRect(true, 8, 22, menu.w - 16, menu.h - 30, { 0, 0, 0, 255 }, bbmenu) -- all this shit does the 2nd gradent
 		Draw:MenuOutlinedRect(true, 9, 23, menu.w - 18, menu.h - 32, { 20, 20, 20, 255 }, bbmenu)
-		Draw:MenuOutlinedRect(true, 10, 24, menu.w - 19, 1, { 127, 72, 163, 255 }, bbmenu)
+		Draw:MenuOutlinedRect(true, 10, 24, menu.w - 19, 1, { 235, 45, 45, 255 }, bbmenu)
 		table.insert(menu.clrs.norm, bbmenu[#bbmenu])
-		Draw:MenuOutlinedRect(true, 10, 25, menu.w - 19, 1, { 87, 32, 123, 255 }, bbmenu)
+		Draw:MenuOutlinedRect(true, 10, 25, menu.w - 19, 1, { 195, 5, 5, 255 }, bbmenu)
 		table.insert(menu.clrs.dark, bbmenu[#bbmenu])
 		Draw:MenuOutlinedRect(true, 10, 26, menu.w - 19, 1, { 20, 20, 20, 255 }, bbmenu)
 
@@ -1699,6 +1759,7 @@ function menu.Initialize(menutable)
 	menu.multigroups = {}
 
 	for k, v in pairs(menutable) do
+		menu.building_tab = nil -- tab buttons / frame below are NOT scrollable content
 		Draw:MenuFilledRect(
 			true,
 			10 + ((k - 1) * ((menu.w - 20) / #menutable)),
@@ -1733,6 +1794,7 @@ function menu.Initialize(menutable)
 		menu.mgrouptabz[v.name] = {}
 
 		local y_offies = { left = 66, right = 66 }
+		menu.building_tab = k -- everything drawn from here is this tab's scrollable content
 		if v.content ~= nil then
 			for k1, v1 in pairs(v.content) do
 				if v1.autopos ~= nil then
@@ -2017,12 +2079,9 @@ function menu.Initialize(menutable)
 					if v1.autopos == nil then
 						Draw:CoolBox(v1.name, v1.x, v1.y, v1.width, v1.height, tabz[k])
 					else
-						if v1.autofill then
-							y_pos = (menu.h - 17) - v1.y
-						elseif v1.size ~= nil then
-							y_pos = v1.size
-						end
-						Draw:CoolBox(v1.name, v1.x, v1.y, v1.width, y_pos, tabz[k])
+						-- auto-size the section to its content height so it hugs the toggles/sliders
+					-- (no wasted space). autofill/size are intentionally ignored here.
+					Draw:CoolBox(v1.name, v1.x, v1.y, v1.width, y_pos, tabz[k])
 						y_offies[v1.autopos] += y_pos + 6
 					end
 				else
@@ -2055,6 +2114,21 @@ function menu.Initialize(menutable)
 				end
 			end
 		end
+	end
+
+	menu.building_tab = nil -- done building tab content; everything after is fixed frame
+
+	-- compute per-tab scroll limits from the tagged content that was pushed to postable
+	for _, _sv in pairs(menu.postable) do
+		if _sv[4] ~= nil then
+			local _b = _sv[3] + (_sv[5] or 0)
+			if not menu.scrollmax[_sv[4]] or _b > menu.scrollmax[_sv[4]] then
+				menu.scrollmax[_sv[4]] = _b
+			end
+		end
+	end
+	for _ti, _b in pairs(menu.scrollmax) do
+		menu.scrollmax[_ti] = math.max(0, _b - (menu.h - 12))
 	end
 
 	menu.list.addval = function(list, option)
@@ -2351,9 +2425,9 @@ function menu.Initialize(menutable)
 	ColorpickerRect(false, 1, 1, cp.w, cp.h, { 35, 35, 35, 255 }, cp.drawings)
 	ColorpickerOutline(false, 1, 1, cp.w, cp.h, { 0, 0, 0, 255 }, cp.drawings)
 	ColorpickerOutline(false, 2, 2, cp.w - 2, cp.h - 2, { 20, 20, 20, 255 }, cp.drawings)
-	ColorpickerOutline(false, 3, 3, cp.w - 3, 1, { 127, 72, 163, 255 }, cp.drawings)
+	ColorpickerOutline(false, 3, 3, cp.w - 3, 1, { 235, 45, 45, 255 }, cp.drawings)
 	table.insert(menu.clrs.norm, cp.drawings[#cp.drawings])
-	ColorpickerOutline(false, 3, 4, cp.w - 3, 1, { 87, 32, 123, 255 }, cp.drawings)
+	ColorpickerOutline(false, 3, 4, cp.w - 3, 1, { 195, 5, 5, 255 }, cp.drawings)
 	table.insert(menu.clrs.dark, cp.drawings[#cp.drawings])
 	ColorpickerOutline(false, 3, 5, cp.w - 3, 1, { 20, 20, 20, 255 }, cp.drawings)
 	ColorpickerText("color picker :D", false, false, 7, 6, cp.drawings)
@@ -2666,7 +2740,7 @@ function menu.Initialize(menutable)
 		{ mousie.x, mousie.y },
 		{ mousie.x, mousie.y + 15 },
 		{ mousie.x + 10, mousie.y + 10 },
-		{ 127, 72, 163, 255 },
+		{ 235, 45, 45, 255 },
 		bbmouse
 	)
 	table.insert(menu.clrs.norm, bbmouse[#bbmouse])
@@ -2965,8 +3039,36 @@ function menu.Initialize(menutable)
 	end
 
 	function menu:SetMenuPos(x, y)
+		local st = menu.scroll[menu.activetab] or 0
+		local clipTop = 59 -- content window top (just below the tab bar)
+		local clipBot = menu.h - 12 -- content window bottom (just above the frame border)
 		for k, v in pairs(menu.postable) do
-			if v[1].Visible then
+			if v[4] ~= nil and v[4] == menu.activetab then
+				-- scrollable content on the active tab
+				if st == 0 then
+					v[1].Position = Vector2.new(x + v[2], y + v[3])
+					if v[6] == "rect" and v[5] and v[1].Size.Y ~= v[5] then
+						v[1].Size = Vector2.new(v[1].Size.X, v[5]) -- restore clipped height
+					end
+				else
+					local top = v[3] - st
+					local h = v[5] or 0
+					local bot = top + h
+					if bot <= clipTop or top >= clipBot then
+						v[1].Position = Vector2.new(-9999, -9999) -- fully outside: park off-screen
+					elseif v[6] == "rect" and h > 0 then
+						-- straddling/inside: clamp the rect to the content window
+						local ntop = top < clipTop and clipTop or top
+						local nbot = bot > clipBot and clipBot or bot
+						v[1].Position = Vector2.new(x + v[2], y + ntop)
+						v[1].Size = Vector2.new(v[1].Size.X, nbot - ntop)
+					elseif top < clipTop or top > clipBot then
+						v[1].Position = Vector2.new(-9999, -9999) -- text anchor outside: park
+					else
+						v[1].Position = Vector2.new(x + v[2], y + top)
+					end
+				end
+			elseif v[1].Visible then
 				v[1].Position = Vector2.new(x + v[2], y + v[3])
 			end
 		end
@@ -4272,11 +4374,26 @@ function menu.Initialize(menutable)
 			end
 		end
 		if menu.open then
-			if menu.options["Settings"]["Cheat Settings"]["Menu Accent"][1] then
-				local clr = menu.options["Settings"]["Cheat Settings"]["Menu Accent"][5][1]
-				menu.mc = { clr[1], clr[2], clr[3] }
+			-- Theme manager: a named preset from the Theme dropdown overrides the accent; "Custom"
+			-- (or any unknown value) falls back to the Menu Accent colorpicker, else the default red.
+			local themePresets = {
+				Red = { 235, 45, 45 }, Purple = { 150, 80, 220 }, Blue = { 45, 120, 235 },
+				Green = { 60, 200, 90 }, Cyan = { 40, 200, 210 }, Orange = { 240, 140, 40 },
+				Pink = { 235, 90, 180 }, White = { 230, 230, 230 }, Yellow = { 240, 215, 60 },
+			}
+			local theme = menu.options["Settings"]["Cheat Settings"]["Theme"]
+			local presetname = theme and theme[6] and theme[1] and theme[6][theme[1]]
+			local preset = presetname and themePresets[presetname]
+			local accentclr = menu.options["Settings"]["Cheat Settings"]["Menu Accent"][5][1]
+			if presetname == "Custom" then
+				-- "Custom" theme = fully user-defined accent from the Accent Color picker (no toggle needed).
+				menu.mc = { accentclr[1], accentclr[2], accentclr[3] }
+			elseif preset then
+				menu.mc = { preset[1], preset[2], preset[3] }
+			elseif menu.options["Settings"]["Cheat Settings"]["Menu Accent"][1] then
+				menu.mc = { accentclr[1], accentclr[2], accentclr[3] }
 			else
-				menu.mc = { 127, 72, 163 }
+				menu.mc = { 235, 45, 45 }
 			end
 			menu:set_menu_clr(menu.mc[1], menu.mc[2], menu.mc[3])
 
@@ -4318,6 +4435,14 @@ function menu.Initialize(menutable)
 
 	menu.connections.mwf = LOCAL_MOUSE.WheelForward:Connect(function()
 		if menu.open then
+			if (menu.scrollmax[menu.activetab] or 0) > 0 and menu:MouseInMenu(6, 59, menu.w - 12, (menu.h - 11) - 59) then
+				local st = (menu.scroll[menu.activetab] or 0) - 45
+				if st < 0 then
+					st = 0
+				end
+				menu.scroll[menu.activetab] = st
+				menu:SetMenuPos(menu.x, menu.y)
+			end
 			for k, v in pairs(menu.options) do
 				if menu.tabnames[menu.activetab] == k then
 					for k1, v1 in pairs(v) do
@@ -4336,6 +4461,15 @@ function menu.Initialize(menutable)
 
 	menu.connections.mwb = LOCAL_MOUSE.WheelBackward:Connect(function()
 		if menu.open then
+			if (menu.scrollmax[menu.activetab] or 0) > 0 and menu:MouseInMenu(6, 59, menu.w - 12, (menu.h - 11) - 59) then
+				local mx = menu.scrollmax[menu.activetab] or 0
+				local st = (menu.scroll[menu.activetab] or 0) + 45
+				if st > mx then
+					st = mx
+				end
+				menu.scroll[menu.activetab] = st
+				menu:SetMenuPos(menu.x, menu.y)
+			end
 			for k, v in pairs(menu.options) do
 				if menu.tabnames[menu.activetab] == k then
 					for k1, v1 in pairs(v) do
@@ -4404,6 +4538,100 @@ function menu.Initialize(menutable)
 		if menu.unloaded then
 			return
 		end
+
+		-- Live-update the whitelist Key Time countdown (LP_TIMELEFT ticks in real time).
+		if menu.keytime then
+			menu.keytime.Text = "Key Time: " .. formatKeyTime(getKeyTimeSeconds())
+		end
+		-- Theme manager: apply the accent every frame so the Theme dropdown recolors the menu
+		-- live. A named preset overrides the accent; "Custom" (or any unknown value) falls back
+		-- to the Menu Accent colorpicker, else the default red.
+		if menu.open then
+			local themePresets = {
+				Red = { 235, 45, 45 }, Purple = { 150, 80, 220 }, Blue = { 45, 120, 235 },
+				Green = { 60, 200, 90 }, Cyan = { 40, 200, 210 }, Orange = { 240, 140, 40 },
+				Pink = { 235, 90, 180 }, White = { 230, 230, 230 }, Yellow = { 240, 215, 60 },
+			}
+			local theme = menu.options["Settings"]["Cheat Settings"]["Theme"]
+			local presetname = theme and theme[6] and theme[1] and theme[6][theme[1]]
+			local preset = presetname and themePresets[presetname]
+			local accentclr = menu.options["Settings"]["Cheat Settings"]["Menu Accent"][5][1]
+			local nc
+			if presetname == "Custom" then
+				-- "Custom" theme = fully user-defined accent from the Accent Color picker (no toggle needed).
+				nc = { accentclr[1], accentclr[2], accentclr[3] }
+			elseif preset then
+				nc = { preset[1], preset[2], preset[3] }
+			elseif menu.options["Settings"]["Cheat Settings"]["Menu Accent"][1] then
+				nc = { accentclr[1], accentclr[2], accentclr[3] }
+			else
+				nc = { 235, 45, 45 }
+			end
+			if not menu.mc or menu.mc[1] ~= nc[1] or menu.mc[2] ~= nc[2] or menu.mc[3] ~= nc[3] then
+				menu.mc = nc
+				menu:set_menu_clr(nc[1], nc[2], nc[3])
+			end
+		end
+		-- Keybind list HUD: rebuild rows from the live keybind state every frame.
+		if menu.keybindlist then
+			local kl = menu.keybindlist
+			local show = true
+			pcall(function()
+				show = menu:GetVal("Visuals", "Keybinds", "Keybind List") and true or false
+			end)
+			local shown = 0
+			if show then
+				local modes = { "Hold", "Toggle", "Hold Off", "Always" }
+				local maxlen = 8 -- floor width to fit the "Keybinds" title
+				for i = 1, #menu.keybinds do
+					local opt = menu.keybinds[i][1]
+					local extra = opt and opt[5]
+					if extra and extra[2] == "keybind" then
+						local keyname = KeyEnumToName(extra[1])
+						if keyname ~= "None" then
+							shown = shown + 1
+							local rowtext = "(" .. (modes[extra.toggletype or 2] or "Toggle") .. ") "
+								.. menu.keybinds[i][2] .. "  [" .. keyname .. "]"
+							if #rowtext > maxlen then maxlen = #rowtext end
+							if shown <= kl.maxrows then
+								local row = kl.rows[shown]
+								row.Text = rowtext
+								row.Position = Vector2.new(kl.pos.x + 6, kl.pos.y + kl.headerh + (shown - 1) * kl.rowh + 1)
+								row.Color = extra.relvalue and RGB(menu.mc[1], menu.mc[2], menu.mc[3]) or RGB(235, 235, 235)
+								row.Visible = true
+							end
+						end
+					end
+				end
+				local displayed = math.min(shown, kl.maxrows)
+				local w = math.max(120, maxlen * 7 + 12)
+				local bodyh = math.max(kl.rowh, displayed * kl.rowh)
+				kl.accentbar.Size = Vector2.new(w, 2)
+				kl.headerfill.Size = Vector2.new(w, kl.headerh - 2)
+				kl.headeroutline.Size = Vector2.new(w, kl.headerh)
+				kl.bodyfill.Size = Vector2.new(w, bodyh)
+				kl.bodyoutline.Size = Vector2.new(w, bodyh)
+				kl.title.Position = Vector2.new(kl.pos.x + w / 2, kl.pos.y + 4)
+				kl.accentbar.Color = RGB(menu.mc[1], menu.mc[2], menu.mc[3])
+				local vis = displayed > 0
+				kl.accentbar.Visible = vis
+				kl.headerfill.Visible = vis
+				kl.headeroutline.Visible = vis
+				kl.bodyfill.Visible = vis
+				kl.bodyoutline.Visible = vis
+				kl.title.Visible = vis
+			else
+				kl.accentbar.Visible = false
+				kl.headerfill.Visible = false
+				kl.headeroutline.Visible = false
+				kl.bodyfill.Visible = false
+				kl.bodyoutline.Visible = false
+				kl.title.Visible = false
+			end
+			for i = math.min(shown, kl.maxrows) + 1, kl.maxrows do
+				kl.rows[i].Visible = false
+			end
+		end
 		SCREEN_SIZE = Camera.ViewportSize
 		-- i pasted the old menu working ingame shit from the old source nate pls fix ty
 		-- this is the really shitty alive check that we've been using since day one
@@ -4426,7 +4654,17 @@ function menu.Initialize(menutable)
 				button[4].text.Text = button.name
 			end
 		end
-        INPUT_SERVICE.MouseBehavior = menu.open and Enum.MouseBehavior.Default or Enum.MouseBehavior.LockCenter
+        if menu.open or menu.fading then
+            -- menu visible: free the cursor so UI elements are clickable
+            INPUT_SERVICE.MouseBehavior = Enum.MouseBehavior.Default
+            menu.wasopen = true
+        elseif menu.wasopen then
+            -- menu just closed: release the cursor ONCE, then hand the mouse back to
+            -- the game. never force LockCenter here -- that was pinning the cursor to
+            -- screen centre whenever the UI was closed.
+            INPUT_SERVICE.MouseBehavior = Enum.MouseBehavior.Default
+            menu.wasopen = false
+        end
         --[[ if menu.open then
 			if client.char.alive then
 				INPUT_SERVICE.MouseBehavior = Enum.MouseBehavior.Default
@@ -4483,6 +4721,32 @@ function menu.Initialize(menutable)
 				else
 					menu:set_menu_alphaparency(fade_amount)
 				end
+			end
+		end
+		-- UI glow: follow the window (menu.x/menu.y) and fade the halo in/out with the menu's
+		-- open/close animation, preserving each layer's own alpha (base * fade) so it stays a soft
+		-- gradient rather than a flat band. Hidden entirely when the menu is closed.
+		if menu.glow then
+			local shown = menu.open or menu.fading
+			local fa
+			if not menu.fading then
+				fa = menu.open and 255 or 0
+			elseif menu.open then
+				fa = 255 - math.floor((tick() - menu.fadestart) * 10 * 255) -- closing
+			else
+				fa = math.floor((tick() - menu.fadestart) * 10 * 255) -- opening
+			end
+			if fa < 0 then
+				fa = 0
+			elseif fa > 255 then
+				fa = 255
+			end
+			local mult = fa / 255
+			for i = 1, #menu.glow.rects do
+				local d = menu.glow.rects[i]
+				d.Position = Vector2.new(menu.x - i, menu.y - i)
+				d.Visible = shown and mult > 0
+				d.Transparency = menu.glow.base[i] * mult
 			end
 		end
 		menu:set_mouse_pos(LOCAL_MOUSE.x, LOCAL_MOUSE.y)
@@ -4690,6 +4954,52 @@ function menu.Initialize(menutable)
 			elseif not menu.mousedown then
 				menu.dontdrag = false
 			end
+			-- Draggable HUD panels (watermark + keybind list): only while the menu is OPEN.
+			-- When closed they stay locked. A per-frame mouse delta moves each panel as one
+			-- unit; the keybind rows/title recompute from kl.pos on the next frame.
+			do
+				local wm = menu.watermark
+				local kl = menu.keybindlist
+				if menu.open and menu.mousedown and not menu.dragging then
+					if not menu.hud_drag then
+						if wm and wm.rect and wm.rect[1] and wm.rect[1].Visible
+							and LOCAL_MOUSE.x > wm.pos.x and LOCAL_MOUSE.x < wm.pos.x + wm.rect[1].Size.x
+							and LOCAL_MOUSE.y > wm.pos.y - GUI_INSET and LOCAL_MOUSE.y < wm.pos.y + wm.height - GUI_INSET
+						then
+							menu.hud_drag = "wm"
+						elseif kl and kl.headeroutline and kl.bodyoutline and kl.headeroutline.Visible
+							and LOCAL_MOUSE.x > kl.pos.x and LOCAL_MOUSE.x < kl.pos.x + kl.headeroutline.Size.x
+							and LOCAL_MOUSE.y > kl.pos.y - GUI_INSET and LOCAL_MOUSE.y < kl.pos.y + kl.headerh + kl.bodyoutline.Size.y - GUI_INSET
+						then
+							menu.hud_drag = "kl"
+						end
+						if menu.hud_drag then
+							menu.hud_lastx, menu.hud_lasty = LOCAL_MOUSE.x, LOCAL_MOUSE.y
+						end
+					end
+					if menu.hud_drag then
+						menu.dontdrag = true -- suppress window drag while moving a HUD panel
+						local ddx = LOCAL_MOUSE.x - (menu.hud_lastx or LOCAL_MOUSE.x)
+						local ddy = LOCAL_MOUSE.y - (menu.hud_lasty or LOCAL_MOUSE.y)
+						menu.hud_lastx, menu.hud_lasty = LOCAL_MOUSE.x, LOCAL_MOUSE.y
+						if ddx ~= 0 or ddy ~= 0 then
+							local pan = menu.hud_drag == "wm" and wm or kl
+							pan.pos = Vector2.new(pan.pos.x + ddx, pan.pos.y + ddy)
+							for _, d in pairs(pan.rect or pan.bg) do
+								d.Position = Vector2.new(d.Position.x + ddx, d.Position.y + ddy)
+							end
+							local extra = pan.text or pan.rows
+							if extra then
+								for _, d in pairs(extra) do
+									d.Position = Vector2.new(d.Position.x + ddx, d.Position.y + ddy)
+								end
+							end
+						end
+					end
+				else
+					menu.hud_drag = nil
+				end
+			end
 			if menu.colorpicker_open then
 				if cp.dragging_m then
 					set_dragbar_m(
@@ -4771,7 +5081,7 @@ function menu.Initialize(menutable)
 						.. menu.watermark.textString
 
 					for i, v in ipairs(menu.watermark.rect) do
-						local len = #menu.watermark.text[1].Text * 7 + 10
+						local len = #menu.watermark.text[1].Text * 9 + 14
 						if i == #menu.watermark.rect then
 							len += 2
 						end
@@ -4954,12 +5264,17 @@ menu.Initialize(__bbmenu)
 
 do
 	local wm = menu.watermark
-	wm.textString = " | " .. "user" .. " | " .. os.date("%b. %d, %Y")
+	local GAME_NAME = "Roblox"
+	pcall(function()
+		GAME_NAME = game:GetService("MarketplaceService"):GetProductInfo(game.PlaceId).Name
+	end)
+	menu.gamename = GAME_NAME
+	wm.textString = " ~ " .. "Osama User" .. " ~ " .. os.date("%b %d %Y") .. " ~ " .. GAME_NAME
 	wm.pos = Vector2.new(50, 9)
 	wm.text = {}
 	local fulltext = menu.options["Settings"]["Cheat Settings"]["MenuName"][1] .. wm.textString
-	wm.width = #fulltext * 7 + 10
-	wm.height = 19
+	wm.width = #fulltext * 9 + 14
+	wm.height = 26
 	wm.rect = {}
 
 	Draw:FilledRect(
@@ -4991,8 +5306,8 @@ do
 		2,
 		false,
 		wm.pos.x + 5,
-		wm.pos.y + 3,
-		13,
+		wm.pos.y + 6,
+		16,
 		false,
 		{ 255, 255, 255, 255 },
 		{ 0, 0, 0, 255 },
@@ -5006,6 +5321,40 @@ for k, v in pairs(menu.watermark.rect) do
 end
 
 menu.watermark.text[1].Visible = true
+
+-- Keybind list HUD (thugsense-style). Renders every bound keybind as "(Mode) Name - Key":
+-- active binds show in the accent color, idle ones white. Gated by Visuals > Keybinds >
+-- Keybind List. Rows are pre-allocated once here and shown/hidden/resized per frame in
+-- renderSteppedMenu (see menu.keybindlist handling there). Panel width/accent track live state.
+do
+	local kl = {}
+	menu.keybindlist = kl
+	kl.pos = Vector2.new(16, 280)
+	kl.maxrows = 24
+	kl.width = 150
+	kl.rowh = 14
+	kl.headerh = 20
+	kl.bg = {}
+	kl.rows = {}
+
+	Draw:FilledRect(false, kl.pos.x, kl.pos.y, kl.width, 2, { menu.mc[1], menu.mc[2], menu.mc[3], 255 }, kl.bg)
+	kl.accentbar = kl.bg[#kl.bg]
+	Draw:FilledRect(false, kl.pos.x, kl.pos.y + 2, kl.width, kl.headerh - 2, { 0, 0, 0, 255 }, kl.bg)
+	kl.headerfill = kl.bg[#kl.bg]
+	Draw:OutlinedRect(false, kl.pos.x, kl.pos.y, kl.width, kl.headerh, { 0, 0, 0, 255 }, kl.bg)
+	kl.headeroutline = kl.bg[#kl.bg]
+	Draw:FilledRect(false, kl.pos.x, kl.pos.y + kl.headerh, kl.width, kl.rowh, { 0, 0, 0, 255 }, kl.bg)
+	kl.bodyfill = kl.bg[#kl.bg]
+	Draw:OutlinedRect(false, kl.pos.x, kl.pos.y + kl.headerh, kl.width, kl.rowh, { 0, 0, 0, 255 }, kl.bg)
+	kl.bodyoutline = kl.bg[#kl.bg]
+
+	Draw:OutlinedText("Keybinds", 2, false, kl.pos.x + kl.width / 2, kl.pos.y + 4, 13, true, { 255, 255, 255, 255 }, { 0, 0, 0, 255 }, kl.bg)
+	kl.title = kl.bg[#kl.bg]
+
+	for _ = 1, kl.maxrows do
+		Draw:OutlinedText("", 2, false, kl.pos.x + 6, kl.pos.y, 13, false, { 255, 255, 255, 255 }, { 0, 0, 0, 255 }, kl.rows)
+	end
+end
 
 local textbox = menu.options["Settings"]["Configuration"]["ConfigName"]
 local relconfigs = GetConfigs()
