@@ -51,6 +51,13 @@ local Library = {
 
 	HudRegistry = {},
 
+	GlowObjects = {},
+	GlowTransparency = 0.5,
+
+	NotificationInAnim = "fade",
+	NotificationOutAnim = "fade",
+	NotificationAnimTime = 0.35,
+
 	FontColor = Color3.fromRGB(255, 255, 255),
 	DisabledColor = Color3.fromRGB(65, 65, 65),
 	MainColor = Color3.fromRGB(28, 28, 28),
@@ -386,6 +393,38 @@ function Library:GetDarkerColor(Color)
 	return Color3.fromHSV(H, S, V / 1.5)
 end
 Library.AccentColorDark = Library:GetDarkerColor(Library.AccentColor)
+
+local GLOW_IMAGE = "rbxassetid://18245826428"
+local GLOW_SLICE = Rect.new(Vector2.new(21, 21), Vector2.new(79, 79))
+
+--// Every glow goes through here so update_glow_strength can drive all of them.
+function Library:CreateGlow(Parent, Options)
+	Options = Options or {}
+
+	local Glow = Library:Create("ImageLabel", {
+		Name = "Glow",
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		BackgroundTransparency = 1,
+		Image = GLOW_IMAGE,
+		ImageColor3 = Options.Color or Library.AccentColor,
+		ImageTransparency = Options.Transparency or Library.GlowTransparency,
+		Position = UDim2.new(0.5, 0, 0.5, 0),
+		Size = UDim2.new(1, Options.Size or 40, 1, Options.Size or 40),
+		ScaleType = Enum.ScaleType.Slice,
+		SliceCenter = GLOW_SLICE,
+		BorderSizePixel = 0,
+		ZIndex = Options.ZIndex or 0,
+		Parent = Parent,
+	})
+
+	Library:AddToRegistry(Glow, {
+		ImageColor3 = "AccentColor",
+	})
+
+	table.insert(Library.GlowObjects, Glow)
+
+	return Glow
+end
 
 function Library:AddToRegistry(Instance, Properties, IsHud)
 	local Idx = #Library.Registry + 1
@@ -2901,22 +2940,157 @@ do
 	end
 end
 
+Library.NotificationMargin = 10
+
+--// Lets every setter below accept whatever casing/spacing the dropdown feeds it,
+--// so "Top Left", "TopLeft" and "topleft" all land on the same branch.
+local function NormaliseName(Value)
+	local Name = tostring(Value or ""):lower():gsub("[%s_%-]", "")
+	return Name
+end
+
+--// "Top Center" | "Below Middle" | "Top Left" | "Top Right"
+--// "Middle Left" | "Middle Right" | "Bottom Left" | "Bottom Right"
+function Library:SetNotificationPosition(Position)
+	Library.NotificationPosition = Position or "Top Center"
+
+	local Area = Library.NotificationArea
+	local Layout = Library.NotificationLayout
+
+	if not Area or not Layout then
+		return
+	end
+
+	local Margin = Library.NotificationMargin
+	local Name = NormaliseName(Position)
+
+	--// Reset to the top-center defaults, then apply the differences.
+	Area.Size = UDim2.new(0, 420, 1, -80)
+	Layout.VerticalAlignment = Enum.VerticalAlignment.Top
+	Layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+
+	if Name == "topleft" then
+		Area.AnchorPoint = Vector2.new(0, 0)
+		Area.Position = UDim2.new(0, Margin, 0, 40)
+		Layout.HorizontalAlignment = Enum.HorizontalAlignment.Left
+	elseif Name == "topright" then
+		Area.AnchorPoint = Vector2.new(1, 0)
+		Area.Position = UDim2.new(1, -Margin, 0, 40)
+		Layout.HorizontalAlignment = Enum.HorizontalAlignment.Right
+	elseif Name == "middleleft" or Name == "centerleft" then
+		Area.AnchorPoint = Vector2.new(0, 0.5)
+		Area.Position = UDim2.new(0, Margin, 0.5, 0)
+		Layout.HorizontalAlignment = Enum.HorizontalAlignment.Left
+		Layout.VerticalAlignment = Enum.VerticalAlignment.Center
+	elseif Name == "middleright" or Name == "centerright" then
+		Area.AnchorPoint = Vector2.new(1, 0.5)
+		Area.Position = UDim2.new(1, -Margin, 0.5, 0)
+		Layout.HorizontalAlignment = Enum.HorizontalAlignment.Right
+		Layout.VerticalAlignment = Enum.VerticalAlignment.Center
+	elseif Name == "bottomleft" then
+		Area.AnchorPoint = Vector2.new(0, 1)
+		Area.Position = UDim2.new(0, Margin, 1, -40)
+		Layout.HorizontalAlignment = Enum.HorizontalAlignment.Left
+		Layout.VerticalAlignment = Enum.VerticalAlignment.Bottom
+	elseif Name == "bottomright" then
+		Area.AnchorPoint = Vector2.new(1, 1)
+		Area.Position = UDim2.new(1, -Margin, 1, -40)
+		Layout.HorizontalAlignment = Enum.HorizontalAlignment.Right
+		Layout.VerticalAlignment = Enum.VerticalAlignment.Bottom
+	elseif Name == "belowmiddle" or Name == "centerbelow" or Name == "belowcenter" then
+		Area.AnchorPoint = Vector2.new(0.5, 0)
+		Area.Position = UDim2.new(0.5, 0, 0.68, 0)
+		Area.Size = UDim2.new(0, 420, 0.32, -20)
+	else
+		Area.AnchorPoint = Vector2.new(0.5, 0)
+		Area.Position = UDim2.new(0.5, 0, 0, 40)
+	end
+end
+
+--// In / out animations a notification can play. Feed these straight into a dropdown.
+Library.NotificationAnims = {
+	"fade",
+	"slide left",
+	"slide right",
+	"slide down",
+	"bounce",
+	"fade bounce",
+}
+
+--// Fade = tween every transparency on the way in/out.
+--// From/To = where the box starts (in) and where it leaves to (out), relative to the
+--// slot the list layout gave it. Style = easing; Back is what makes bounce overshoot.
+local NotificationAnimInfo = {
+	["fade"] = {
+		Fade = true,
+		From = UDim2.new(0, 0, 0, 0),
+		To = UDim2.new(0, 0, 0, 0),
+		Style = Enum.EasingStyle.Quad,
+	},
+	["slideleft"] = {
+		From = UDim2.new(1.5, 0, 0, 0),
+		To = UDim2.new(-1.5, 0, 0, 0),
+		Style = Enum.EasingStyle.Quad,
+	},
+	["slideright"] = {
+		From = UDim2.new(-1.5, 0, 0, 0),
+		To = UDim2.new(1.5, 0, 0, 0),
+		Style = Enum.EasingStyle.Quad,
+	},
+	["slidedown"] = {
+		From = UDim2.new(0, 0, -2.5, 0),
+		To = UDim2.new(0, 0, 2.5, 0),
+		Style = Enum.EasingStyle.Quad,
+	},
+	["bounce"] = {
+		From = UDim2.new(0, 0, -2.5, 0),
+		To = UDim2.new(0, 0, 2.5, 0),
+		Style = Enum.EasingStyle.Back,
+	},
+	["fadebounce"] = {
+		Fade = true,
+		From = UDim2.new(0, 0, -2.5, 0),
+		To = UDim2.new(0, 0, 2.5, 0),
+		Style = Enum.EasingStyle.Back,
+	},
+}
+
+function Library:GetNotificationAnim(Name)
+	return NotificationAnimInfo[NormaliseName(Name)] or NotificationAnimInfo.fade
+end
+
+--// "fade" | "slide left" | "slide right" | "slide down" | "bounce" | "fade bounce"
+function Library:SetNotificationInAnim(Name)
+	Library.NotificationInAnim = Name or "fade"
+end
+
+function Library:SetNotificationOutAnim(Name)
+	Library.NotificationOutAnim = Name or "fade"
+end
+
+function Library:SetNotificationAnimTime(Time)
+	Library.NotificationAnimTime = math.clamp(tonumber(Time) or 0.35, 0.05, 3)
+end
+
 -- < Create other UI elements >
 do
 	Library.NotificationArea = Library:Create("Frame", {
 		BackgroundTransparency = 1,
-		Position = UDim2.new(0, 0, 0, 40),
-		Size = UDim2.new(0, 300, 0, 200),
+		AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.new(0.5, 0, 0, 40),
+		Size = UDim2.new(0, 420, 1, -80),
 		ZIndex = 100,
 		Parent = ScreenGui,
 	})
 
-	Library:Create("UIListLayout", {
+	Library.NotificationLayout = Library:Create("UIListLayout", {
 		Padding = UDim.new(0, 4),
 		FillDirection = Enum.FillDirection.Vertical,
 		SortOrder = Enum.SortOrder.LayoutOrder,
 		Parent = Library.NotificationArea,
 	})
+
+	Library:SetNotificationPosition("TopCenter")
 
 	local WatermarkOuter = Library:Create("Frame", {
 		BorderColor3 = Color3.new(0, 0, 0),
@@ -2925,6 +3099,11 @@ do
 		ZIndex = 200,
 		Visible = false,
 		Parent = ScreenGui,
+	})
+
+	Library:CreateGlow(WatermarkOuter, {
+		Size = 24,
+		ZIndex = 199,
 	})
 
 	local WatermarkInner = Library:Create("Frame", {
@@ -2994,6 +3173,11 @@ do
 		ZIndex = 100,
 		Visible = false,
 		Parent = ScreenGui,
+	})
+
+	Library:CreateGlow(KeybindOuter, {
+		Size = 24,
+		ZIndex = 99,
 	})
 
 	local KeybindInner = Library:Create("Frame", {
@@ -3083,11 +3267,265 @@ function Library:SetWatermarkVisibility(Bool)
 end
 
 function Library:SetWatermark(Text)
+	Library.WatermarkTitle = Text
+	Library:UpdateWatermark()
+end
+
+--// Watermark builder. `Items` picks which segments show, in this order:
+--// Title, User, FPS, Ms, Date, Time. Refreshed once a second by the loop below.
+Library.WatermarkTitle = "Custom Linora"
+Library.WatermarkItems = { "Title", "Time" }
+
+function Library:SetWatermarkItems(Items)
+	Library.WatermarkItems = type(Items) == "table" and Items or {}
+	Library:UpdateWatermark()
+end
+
+function Library:UpdateWatermark()
+	if not Library.Watermark then
+		return
+	end
+
+	local Wanted = {}
+
+	for _, Item in next, Library.WatermarkItems do
+		Wanted[Item] = true
+	end
+
+	local Segments = {}
+
+	if Wanted.Title then
+		table.insert(Segments, Library.WatermarkTitle)
+	end
+
+	if Wanted.User then
+		table.insert(Segments, LocalPlayer.Name)
+	end
+
+	if Wanted.FPS then
+		table.insert(Segments, string.format("%d fps", Library.WatermarkFPS or 0))
+	end
+
+	if Wanted.Ms then
+		local Ping = 0
+		pcall(function()
+			Ping = math.floor(
+				game:GetService("Stats").Network.ServerStatsItem["Data Ping"]:GetValueString():match("%d+") or 0
+			)
+		end)
+		table.insert(Segments, string.format("%d ms", Ping))
+	end
+
+	if Wanted.Date then
+		table.insert(Segments, os.date("%d/%m/%Y"))
+	end
+
+	if Wanted.Time then
+		table.insert(Segments, os.date("%H:%M:%S"))
+	end
+
+	local Text = table.concat(Segments, " | ")
+
+	if Text == "" then
+		Text = Library.WatermarkTitle
+	end
+
 	local X, Y = Library:GetTextBounds(Text, Library.FontFace, 12)
 	Library.Watermark.Size = UDim2.new(0, X + 15, 0, (Y * 1.5) + 3)
-	Library:SetWatermarkVisibility(true)
-
 	Library.WatermarkText.Text = Text
+end
+
+task.spawn(function()
+	local Frames, Clock = 0, os.clock()
+
+	while ScreenGui.Parent do
+		Frames = Frames + 1
+
+		if os.clock() - Clock >= 1 then
+			Library.WatermarkFPS = Frames / (os.clock() - Clock)
+			Frames, Clock = 0, os.clock()
+
+			if Library.Watermark and Library.Watermark.Visible then
+				Library:UpdateWatermark()
+			end
+		end
+
+		RenderStepped:Wait()
+	end
+end)
+
+function Library:SetKeybindVisibility(Bool)
+	if Library.KeybindFrame then
+		Library.KeybindFrame.Visible = Bool
+	end
+end
+
+--// 0 - 1. Drives every glow in the UI (window, watermark, keybind list, notifications).
+function Library:update_glow_strength(Alpha)
+	Library.GlowStrength = math.clamp(tonumber(Alpha) or 0, 0, 1)
+	Library.GlowTransparency = 1 - Library.GlowStrength
+
+	for Idx = #Library.GlowObjects, 1, -1 do
+		local Glow = Library.GlowObjects[Idx]
+
+		if not Glow or not Glow.Parent then
+			table.remove(Library.GlowObjects, Idx)
+			continue
+		end
+
+		Glow.ImageTransparency = Library.GlowTransparency
+	end
+end
+
+--// 0 disables the blur entirely. Applies live while the menu is open.
+function Library:SetBlurSize(Size)
+	Library.BlurSize = math.max(tonumber(Size) or 0, 0)
+
+	local MenuBlur = Library.MenuBlur
+
+	if MenuBlur then
+		MenuBlur.Enabled = Library.BlurSize > 0
+
+		if Library.Toggled then
+			MenuBlur.Size = Library.BlurSize
+		end
+	end
+end
+
+do
+	local Emitter, Attachment, Holder
+
+	local function Teardown()
+		if Holder then
+			Holder:Destroy()
+		end
+
+		Emitter, Attachment, Holder = nil, nil, nil
+	end
+
+	--// "Off" | "Rain" | "Snow"
+	function Library:SetWeatherEffect(Effect)
+		Library.WeatherEffect = Effect or "Off"
+
+		Teardown()
+
+		if Library.WeatherEffect == "Off" then
+			return
+		end
+
+		local Camera = workspace.CurrentCamera
+
+		if not Camera then
+			return
+		end
+
+		Holder = Instance.new("Part")
+		Holder.Name = "LinoraWeather"
+		Holder.Anchored = true
+		Holder.CanCollide = false
+		Holder.CanQuery = false
+		Holder.CanTouch = false
+		Holder.Transparency = 1
+		Holder.Size = Vector3.new(1, 1, 1)
+		Holder.Parent = Camera
+
+		Attachment = Instance.new("Attachment")
+		Attachment.Parent = Holder
+
+		Emitter = Instance.new("ParticleEmitter")
+		Emitter.Texture = "rbxasset://textures/particles/sparkles_main.dds"
+		Emitter.LightEmission = 0.35
+		Emitter.LockedToPart = false
+		Emitter.Rate = Library.WeatherAmount or 0
+		Emitter.SpreadAngle = Vector2.new(180, 180)
+		Emitter.EmissionDirection = Enum.NormalId.Bottom
+		Emitter.Parent = Attachment
+
+		if Library.WeatherEffect == "Rain" then
+			Emitter.Color = ColorSequence.new(Color3.fromRGB(170, 195, 225))
+			Emitter.Size = NumberSequence.new(0.12, 0.5)
+			Emitter.Transparency = NumberSequence.new(0.35)
+			Emitter.Speed = NumberRange.new(70, 90)
+			Emitter.Lifetime = NumberRange.new(0.6, 0.9)
+			Emitter.Drag = 0
+		else
+			Emitter.Color = ColorSequence.new(Color3.fromRGB(255, 255, 255))
+			Emitter.Size = NumberSequence.new(0.2, 0.35)
+			Emitter.Transparency = NumberSequence.new(0.15)
+			Emitter.Speed = NumberRange.new(6, 12)
+			Emitter.Lifetime = NumberRange.new(3, 5)
+			Emitter.Drag = 2
+		end
+
+		task.spawn(function()
+			while Holder and Holder.Parent do
+				local Cam = workspace.CurrentCamera
+
+				if Cam then
+					Holder.CFrame = CFrame.new(Cam.CFrame.Position + Vector3.new(0, 45, 0))
+				end
+
+				RenderStepped:Wait()
+			end
+		end)
+	end
+
+	--// Particles per second. 0 stops emission without tearing the effect down.
+	function Library:SetWeatherAmount(Amount)
+		Library.WeatherAmount = math.max(tonumber(Amount) or 0, 0)
+
+		if Emitter then
+			Emitter.Rate = Library.WeatherAmount
+		end
+	end
+
+	Library:GiveSignal(ScreenGui.Destroying:Connect(Teardown))
+end
+
+--// Toggles the library's built-in Drawing cursor. The system cursor comes back
+--// automatically when this is off or the menu is closed.
+function Library:SetCustomCursorEnabled(Bool)
+	Library.CustomCursorEnabled = Bool and true or false
+end
+
+--// Grabs every transparency property under Root so the fade anims can drive them
+--// back to the exact values the theme gave them.
+local function CollectFadeTargets(Root)
+	local Targets = {}
+
+	local function Add(Inst)
+		if Inst:IsA("GuiObject") then
+			table.insert(Targets, { Inst, "BackgroundTransparency", Inst.BackgroundTransparency })
+		end
+
+		if Inst:IsA("TextLabel") or Inst:IsA("TextButton") or Inst:IsA("TextBox") then
+			table.insert(Targets, { Inst, "TextTransparency", Inst.TextTransparency })
+			table.insert(Targets, { Inst, "TextStrokeTransparency", Inst.TextStrokeTransparency })
+		end
+
+		if Inst:IsA("ImageLabel") or Inst:IsA("ImageButton") then
+			table.insert(Targets, { Inst, "ImageTransparency", Inst.ImageTransparency })
+		end
+	end
+
+	Add(Root)
+
+	for _, Desc in next, Root:GetDescendants() do
+		Add(Desc)
+	end
+
+	return Targets
+end
+
+--// Alpha 1 = fully visible, 0 = fully transparent.
+local function ApplyFade(Targets, Alpha)
+	for _, Target in next, Targets do
+		local Inst, Prop, Base = Target[1], Target[2], Target[3]
+
+		if Inst.Parent then
+			Inst[Prop] = 1 - ((1 - Base) * Alpha)
+		end
+	end
 end
 
 function Library:Notify(Text, Time)
@@ -3095,13 +3533,29 @@ function Library:Notify(Text, Time)
 
 	YSize = YSize + 7
 
-	local NotifyOuter = Library:Create("Frame", {
-		BorderColor3 = Color3.new(0, 0, 0),
-		Position = UDim2.new(0, 100, 0, 10),
-		Size = UDim2.new(0, 0, 0, YSize),
-		ClipsDescendants = true,
+	local AnimTime = Library.NotificationAnimTime or 0.35
+	local InAnim = Library:GetNotificationAnim(Library.NotificationInAnim)
+	local OutAnim = Library:GetNotificationAnim(Library.NotificationOutAnim)
+
+	--// The list layout owns the holder's position, so the anim moves the box inside it.
+	local NotifyHolder = Library:Create("Frame", {
+		BackgroundTransparency = 1,
+		Size = UDim2.new(0, XSize + 8 + 4, 0, YSize),
 		ZIndex = 100,
 		Parent = Library.NotificationArea,
+	})
+
+	local NotifyOuter = Library:Create("Frame", {
+		BorderColor3 = Color3.new(0, 0, 0),
+		Position = InAnim.From,
+		Size = UDim2.new(1, 0, 1, 0),
+		ZIndex = 100,
+		Parent = NotifyHolder,
+	})
+
+	Library:CreateGlow(NotifyOuter, {
+		Size = 24,
+		ZIndex = 99,
 	})
 
 	local NotifyInner = Library:Create("Frame", {
@@ -3158,8 +3612,8 @@ function Library:Notify(Text, Time)
 	local LeftColor = Library:Create("Frame", {
 		BackgroundColor3 = Library.AccentColor,
 		BorderSizePixel = 0,
-		Position = UDim2.new(0, -1, 0, -1),
-		Size = UDim2.new(0, 3, 1, 2),
+		Position = UDim2.new(0, 0, 0, 0),
+		Size = UDim2.new(0, 3, 1, 0),
 		ZIndex = 104,
 		Parent = NotifyOuter,
 	})
@@ -3168,16 +3622,67 @@ function Library:Notify(Text, Time)
 		BackgroundColor3 = "AccentColor",
 	}, true)
 
-	pcall(NotifyOuter.TweenSize, NotifyOuter, UDim2.new(0, XSize + 8 + 4, 0, YSize), "Out", "Quad", 0.4, true)
+	local FadeTargets = CollectFadeTargets(NotifyOuter)
+
+	local function Slide(Goal, Style, Direction)
+		local Tween = TweenService:Create(
+			NotifyOuter,
+			TweenInfo.new(AnimTime, Style, Direction),
+			{ Position = Goal }
+		)
+
+		Tween:Play()
+
+		return Tween
+	end
+
+	local function Fade(From, To)
+		ApplyFade(FadeTargets, From)
+
+		task.spawn(function()
+			local Start = os.clock()
+
+			while NotifyOuter.Parent do
+				local Alpha = math.clamp((os.clock() - Start) / AnimTime, 0, 1)
+
+				ApplyFade(FadeTargets, From + ((To - From) * Alpha))
+
+				if Alpha >= 1 then
+					break
+				end
+
+				RenderStepped:Wait()
+			end
+		end)
+	end
+
+	if InAnim.Fade then
+		Fade(0, 1)
+	end
+
+	Slide(UDim2.new(0, 0, 0, 0), InAnim.Style, Enum.EasingDirection.Out)
 
 	task.spawn(function()
-		wait(Time or 5)
+		task.wait(Time or 5)
 
-		pcall(NotifyOuter.TweenSize, NotifyOuter, UDim2.new(0, 0, 0, YSize), "Out", "Quad", 0.4, true)
+		if not NotifyOuter.Parent then
+			return
+		end
 
-		wait(0.4)
+		if OutAnim.Fade then
+			Fade(1, 0)
+		end
 
-		NotifyOuter:Destroy()
+		--// Back easing overshoots on the way out too, which is what sells the bounce.
+		Slide(
+			OutAnim.To,
+			OutAnim.Style,
+			OutAnim.Style == Enum.EasingStyle.Back and Enum.EasingDirection.In or Enum.EasingDirection.Out
+		)
+
+		task.wait(AnimTime)
+
+		NotifyHolder:Destroy()
 	end)
 end
 
@@ -3231,25 +3736,12 @@ function Library:CreateWindow(...)
 
 	Library:MakeDraggable(Outer, 25)
 
-	local Glow = Library:Create("ImageLabel", {
-		Parent = Outer,
-		ImageColor3 = Library.AccentColor,
-		ScaleType = Enum.ScaleType.Slice,
-		BorderColor3 = Color3.fromRGB(0, 0, 0),
-		BackgroundColor3 = Color3.fromRGB(255, 255, 255),
-		Image = "http://www.roblox.com/asset/?id=18245826428",
-		BackgroundTransparency = 1,
-		ImageTransparency = 0.8,
-		Position = UDim2.new(0, -20, 0, -20),
-		Size = UDim2.new(1, 40, 1, 40),
-		ZIndex = 1,
-		BorderSizePixel = 0,
-		SliceCenter = Rect.new(Vector2.new(21, 21), Vector2.new(79, 79)),
+	local Glow = Library:CreateGlow(Outer, {
+		Size = 48,
+		ZIndex = 0,
 	})
 
-	Library:AddToRegistry(Glow, {
-		ImageColor3 = "AccentColor",
-	})
+	Library.Glow = Glow
 
 	local Inner = Library:Create("Frame", {
 		BackgroundColor3 = Library.MainColor,
@@ -3447,6 +3939,60 @@ function Library:CreateWindow(...)
 			Parent = TabFrame,
 		})
 
+		-- Optional third column. Tabs stay two-column until AddMidGroupbox/AddMidTabbox
+		-- is used, at which point this tab (and only this tab) switches to thirds.
+		local MidSide = Library:Create("ScrollingFrame", {
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			Position = UDim2.new(1 / 3, 4, 0, 8 - 1),
+			Size = UDim2.new(1 / 3, -8, 0, 507 + 2),
+			CanvasSize = UDim2.new(0, 0, 0, 0),
+			BottomImage = "",
+			TopImage = "",
+			ScrollBarThickness = 0,
+			ZIndex = 2,
+			Visible = false,
+			Parent = TabFrame,
+		})
+
+		Library:Create("UIListLayout", {
+			Padding = UDim.new(0, 8),
+			FillDirection = Enum.FillDirection.Vertical,
+			SortOrder = Enum.SortOrder.LayoutOrder,
+			HorizontalAlignment = Enum.HorizontalAlignment.Center,
+			Parent = MidSide,
+		})
+
+		local ThreeColumns = false
+
+		local function UseThreeColumns()
+			if ThreeColumns then
+				return
+			end
+
+			ThreeColumns = true
+			MidSide.Visible = true
+
+			LeftSide.Position = UDim2.new(0, 7, 0, 7)
+			LeftSide.Size = UDim2.new(1 / 3, -9, 0, 509)
+
+			MidSide.Position = UDim2.new(1 / 3, 4, 0, 7)
+			MidSide.Size = UDim2.new(1 / 3, -8, 0, 509)
+
+			RightSide.Position = UDim2.new(2 / 3, 2, 0, 7)
+			RightSide.Size = UDim2.new(1 / 3, -9, 0, 509)
+		end
+
+		-- Side: 1 = left, 2 = right, 3 = mid
+		local function GetSide(Side)
+			if Side == 3 then
+				UseThreeColumns()
+				return MidSide
+			end
+
+			return Side == 1 and LeftSide or RightSide
+		end
+
 		Library:Create("UIListLayout", {
 			Padding = UDim.new(0, 8),
 			FillDirection = Enum.FillDirection.Vertical,
@@ -3463,7 +4009,7 @@ function Library:CreateWindow(...)
 			Parent = RightSide,
 		})
 
-		for _, Side in next, { LeftSide, RightSide } do
+		for _, Side in next, { LeftSide, MidSide, RightSide } do
 			Side:WaitForChild("UIListLayout"):GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
 				Side.CanvasSize = UDim2.fromOffset(0, Side.UIListLayout.AbsoluteContentSize.Y)
 			end)
@@ -3504,7 +4050,7 @@ function Library:CreateWindow(...)
 				BorderMode = Enum.BorderMode.Inset,
 				Size = UDim2.new(1, 0, 0, 507 + 2),
 				ZIndex = 2,
-				Parent = Info.Side == 1 and LeftSide or RightSide,
+				Parent = GetSide(Info.Side),
 			})
 
 			Library:AddToRegistry(BoxOuter, {
@@ -3596,7 +4142,7 @@ function Library:CreateWindow(...)
 				BorderMode = Enum.BorderMode.Inset,
 				Size = UDim2.new(1, 0, 0, FixedHeight + 2),
 				ZIndex = 2,
-				Parent = Info.Side == 1 and LeftSide or RightSide,
+				Parent = GetSide(Info.Side),
 			})
 
 			Library:AddToRegistry(BoxOuter, {
@@ -3712,6 +4258,10 @@ function Library:CreateWindow(...)
 			return Tab:AddGroupbox({ Side = 2, Name = Name })
 		end
 
+		function Tab:AddMidGroupbox(Name)
+			return Tab:AddGroupbox({ Side = 3, Name = Name })
+		end
+
 		function Tab:AddTabbox(Info)
 			local Tabbox = {
 				Tabs = {},
@@ -3723,7 +4273,7 @@ function Library:CreateWindow(...)
 				BorderMode = Enum.BorderMode.Inset,
 				Size = UDim2.new(1, 0, 0, 0),
 				ZIndex = 2,
-				Parent = Info.Side == 1 and LeftSide or RightSide,
+				Parent = GetSide(Info.Side),
 			})
 
 			Library:AddToRegistry(BoxOuter, {
@@ -3913,6 +4463,10 @@ function Library:CreateWindow(...)
 			return Tab:AddTabbox({ Name = Name, Side = 2 })
 		end
 
+		function Tab:AddMidTabbox(Name)
+			return Tab:AddTabbox({ Name = Name, Side = 3 })
+		end
+
 		TabButton.InputBegan:Connect(function(Input)
 			if Input.UserInputType == Enum.UserInputType.MouseButton1 then
 				Tab:ShowTab()
@@ -3956,7 +4510,8 @@ function Library:CreateWindow(...)
 		local Lighting = game:FindService("Lighting")
 		local MenuBlur = Lighting:FindFirstChild("MenuBlur") or Instance.new("BlurEffect", Lighting)
 		MenuBlur.Name = "MenuBlur"
-		MenuBlur.Enabled = getgenv().MenuBlurEnabled
+		MenuBlur.Enabled = (Library.BlurSize or 0) > 0
+		Library.MenuBlur = MenuBlur
 
 		if BlurTween then
 			BlurTween:Cancel()
@@ -3967,12 +4522,17 @@ function Library:CreateWindow(...)
 		local FadeTime = Config.MenuFadeTime
 
 		Toggled = not Toggled
+		Library.Toggled = Toggled
 		ModalElement.Modal = Toggled
 
 		if Toggled then
 			Outer.Visible = true
 
-			BlurTween = TweenService:Create(MenuBlur, TweenInfo.new(FadeTime, Enum.EasingStyle.Linear), { Size = 20 })
+			BlurTween = TweenService:Create(
+				MenuBlur,
+				TweenInfo.new(FadeTime, Enum.EasingStyle.Linear),
+				{ Size = Library.BlurSize or 0 }
+			)
 			BlurTween:Play()
 
 			task.spawn(function()
