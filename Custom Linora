@@ -4210,9 +4210,79 @@ function Library:CreateWindow(...)
 		Padding = UDim.new(0, Config.TabPadding),
 		FillDirection = Enum.FillDirection.Horizontal,
 		SortOrder = Enum.SortOrder.LayoutOrder,
-		HorizontalFlex = Enum.UIFlexAlignment.Fill,
 		Parent = TabArea,
 	})
+
+	--// Tab widths are worked out in whole pixels instead of handing the row over to
+	--// UIFlexAlignment.Fill. Flex splits the leftover space into fractions and those
+	--// fractions land on screen as random 1px seams, which is why the tabs sometimes
+	--// stopped looking connected. Every tab starts at the width its own text needs and
+	--// whatever is left over gets shared out a pixel at a time, so the row adds up to
+	--// exactly TabArea's width every single run. No gaps, no dead space at the end.
+	local TabButtons = {}
+
+	local function ResizeTabs()
+		local Count = #TabButtons
+
+		if Count == 0 then
+			return
+		end
+
+		local Row = TabArea.AbsoluteSize.X
+
+		--// AddTab usually runs before the window has ever been laid out, and AbsoluteSize
+		--// is still 0 that early, so work the width out from the frame chain instead. The
+		--// AbsoluteSize signal below puts it right the moment the real size lands.
+		if Row <= 0 then
+			Row = Outer.AbsoluteSize.X
+
+			if Row <= 0 then
+				Row = Config.Size.X.Offset
+			end
+
+			--// Inner takes 2, MainSectionOuter takes 16, TabArea takes another 16
+			Row = Row - 34
+		end
+
+		local Space = Row - (Config.TabPadding * (Count - 1))
+
+		--// Not even a pixel each, leave the tabs alone rather than collapse them
+		if Space < Count then
+			return
+		end
+
+		--// SetLayoutOrder can shuffle the row after the fact, so hand the spare pixels out
+		--// in the order the tabs are actually drawn in. Index breaks the tie because
+		--// table.sort is not stable and every tab sits at LayoutOrder 0 by default.
+		table.sort(TabButtons, function(A, B)
+			if A.Button.LayoutOrder == B.Button.LayoutOrder then
+				return A.Index < B.Index
+			end
+
+			return A.Button.LayoutOrder < B.Button.LayoutOrder
+		end)
+
+		local Used = 0
+
+		for _, Entry in next, TabButtons do
+			Used = Used + Entry.MinWidth
+		end
+
+		--// Share goes negative when the names are too wide to fit, which trims every tab
+		--// evenly instead of letting the last one hang off the edge of the window
+		local Leftover = Space - Used
+		local Share = math.floor(Leftover / Count)
+		local Remainder = Leftover - (Share * Count)
+
+		for Idx, Entry in ipairs(TabButtons) do
+			local Width = Entry.MinWidth + Share + (Idx <= Remainder and 1 or 0)
+
+			Entry.Button.Size = UDim2.new(0, Width, 1, 0)
+		end
+	end
+
+	--// Refit on resize so a different window size never leaves the row short or overhanging
+	TabArea:GetPropertyChangedSignal("AbsoluteSize"):Connect(ResizeTabs)
 
 	local TabContainer = Library:Create("Frame", {
 		BackgroundColor3 = Library.MainColor,
@@ -4243,9 +4313,17 @@ function Library:CreateWindow(...)
 		local TabButton = Library:Create("Frame", {
 			BackgroundColor3 = Library.BackgroundColor,
 			BorderColor3 = Library.OutlineColor,
-			Size = UDim2.new(0, 8 + 4, 1, 0),
+			Size = UDim2.new(0, TabButtonWidth + 8 + 4, 1, 0),
 			ZIndex = 1,
 			Parent = TabArea,
+		})
+
+		--// The width the label needs plus its side padding. ResizeTabs treats this as the
+		--// floor for this tab and shares the rest of the row out from there.
+		table.insert(TabButtons, {
+			Button = TabButton,
+			Index = #TabButtons + 1,
+			MinWidth = math.ceil(TabButtonWidth) + 8 + 4,
 		})
 
 		local Gradient = Library:Create("UIGradient", {
@@ -4442,6 +4520,9 @@ function Library:CreateWindow(...)
 		function Tab:SetLayoutOrder(Position)
 			TabButton.LayoutOrder = Position
 			TabListLayout:ApplyLayout()
+
+			--// The spare pixels follow the drawing order, so they move with the tab
+			ResizeTabs()
 		end
 
 		function Tab:AddGroupbox(Info)
@@ -4880,6 +4961,9 @@ function Library:CreateWindow(...)
 		if #TabContainer:GetChildren() == 1 then
 			Tab:ShowTab()
 		end
+
+		--// Every existing tab gives up a slice of its width for this one
+		ResizeTabs()
 
 		Window.Tabs[Name] = Tab
 		return Tab
