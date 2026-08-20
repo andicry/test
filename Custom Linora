@@ -1986,6 +1986,409 @@ do
 		return Textbox
 	end
 
+	--// Listbox: a fixed-height scrolling picker with an optional built-in search box.
+	--// Values live in Listbox.Values, the search box only filters what gets drawn, so a
+	--// SetValues refresh never loses the selection or what the user typed.
+	function Funcs:AddListbox(Idx, Info)
+		Info = Info or {}
+
+		local AllowNull = Info.AllowNull ~= false
+		local RowHeight = Info.RowHeight or 16
+		local ListPadding = 3
+
+		local Listbox = {
+			Values = Info.Values or {},
+			Value = Info.Multi and {} or Info.Default,
+			Multi = Info.Multi or false,
+			Height = Info.Height or 175,
+			Filter = "",
+			Type = "Listbox",
+			Callback = Info.Callback or function(Value) end,
+		}
+
+		local Groupbox = self
+		local Container = Groupbox.Container
+
+		if Info.Text then
+			Library:CreateLabel({
+				Size = UDim2.new(1, 0, 0, 15),
+				TextSize = 12,
+				Text = Info.Text,
+				TextXAlignment = Enum.TextXAlignment.Left,
+				ZIndex = 5,
+				Parent = Container,
+			})
+
+			Groupbox:AddBlank(1)
+		end
+
+		--// Search box. Built inline instead of through AddInput so it carries no label
+		--// and never lands in Options, which would put a search string in every config.
+		if Info.Search then
+			local SearchOuter = Library:Create("Frame", {
+				BackgroundColor3 = Color3.new(0, 0, 0),
+				BorderColor3 = Color3.new(0, 0, 0),
+				Size = UDim2.new(1, -4, 0, 20),
+				ZIndex = 5,
+				Parent = Container,
+			})
+
+			local SearchInner = Library:Create("Frame", {
+				BackgroundColor3 = Library.MainColor,
+				BorderColor3 = Library.OutlineColor,
+				BorderMode = Enum.BorderMode.Inset,
+				Size = UDim2.new(1, 0, 1, 0),
+				ZIndex = 6,
+				Parent = SearchOuter,
+			})
+
+			Library:AddToRegistry(SearchOuter, {
+				BorderColor3 = "Black",
+			})
+
+			Library:AddToRegistry(SearchInner, {
+				BackgroundColor3 = "MainColor",
+				BorderColor3 = "OutlineColor",
+			})
+
+			Library:OnHighlight(SearchOuter, SearchOuter, { BorderColor3 = "AccentColor" }, { BorderColor3 = "Black" })
+
+			Library:Create("UIGradient", {
+				Color = ColorSequence.new({
+					ColorSequenceKeypoint.new(0, Color3.new(1, 1, 1)),
+					ColorSequenceKeypoint.new(1, Color3.fromRGB(212, 212, 212)),
+				}),
+				Rotation = 90,
+				Parent = SearchInner,
+			})
+
+			local SearchClip = Library:Create("Frame", {
+				BackgroundTransparency = 1,
+				ClipsDescendants = true,
+				Position = UDim2.new(0, 5, 0, 0),
+				Size = UDim2.new(1, -5, 1, 0),
+				ZIndex = 7,
+				Parent = SearchInner,
+			})
+
+			local SearchBox = Library:Create("TextBox", {
+				BackgroundTransparency = 1,
+				ClearTextOnFocus = false,
+				Position = UDim2.fromOffset(2, 0),
+				Size = UDim2.new(1, -4, 1, 0),
+
+				PlaceholderColor3 = Color3.fromRGB(190, 190, 190),
+				PlaceholderText = Info.Placeholder or "Type to search...",
+
+				Text = "",
+				TextColor3 = Library.FontColor,
+				TextSize = 12,
+				TextStrokeTransparency = 0,
+				TextXAlignment = Enum.TextXAlignment.Left,
+
+				ZIndex = 7,
+				Parent = SearchClip,
+
+				FontFace = Library.FontFace,
+			})
+
+			Library:ApplyTextStroke(SearchBox)
+
+			Library:AddToRegistry(SearchBox, {
+				TextColor3 = "FontColor",
+			})
+
+			--// No Finished flag anywhere here on purpose, the list filters per keystroke.
+			SearchBox:GetPropertyChangedSignal("Text"):Connect(function()
+				Listbox.Filter = SearchBox.Text
+				Listbox:BuildList()
+			end)
+
+			Listbox.SearchBox = SearchBox
+
+			Groupbox:AddBlank(3)
+		end
+
+		local ListOuter = Library:Create("Frame", {
+			BackgroundColor3 = Color3.new(0, 0, 0),
+			BorderColor3 = Color3.new(0, 0, 0),
+			Size = UDim2.new(1, -4, 0, Listbox.Height),
+			ZIndex = 5,
+			Parent = Container,
+		})
+
+		local ListInner = Library:Create("Frame", {
+			BackgroundColor3 = Library.MainColor,
+			BorderColor3 = Library.OutlineColor,
+			BorderMode = Enum.BorderMode.Inset,
+			Size = UDim2.new(1, 0, 1, 0),
+			ZIndex = 6,
+			Parent = ListOuter,
+		})
+
+		Library:AddToRegistry(ListOuter, {
+			BorderColor3 = "Black",
+		})
+
+		Library:AddToRegistry(ListInner, {
+			BackgroundColor3 = "MainColor",
+			BorderColor3 = "OutlineColor",
+		})
+
+		Library:Create("UIGradient", {
+			Rotation = 90,
+			Parent = ListInner,
+			Color = ColorSequence.new({
+				ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 255, 255)),
+				ColorSequenceKeypoint.new(1, Color3.fromRGB(235, 235, 235)),
+			}),
+		})
+
+		local Scrolling = Library:Create("ScrollingFrame", {
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			CanvasSize = UDim2.new(0, 0, 0, 0),
+			Size = UDim2.new(1, 0, 1, 0),
+			ZIndex = 7,
+			Parent = ListInner,
+
+			TopImage = "rbxasset://textures/ui/Scroll/scroll-middle.png",
+			BottomImage = "rbxasset://textures/ui/Scroll/scroll-middle.png",
+
+			ScrollBarThickness = 3,
+			ScrollBarImageColor3 = Library.AccentColor,
+		})
+
+		Library:AddToRegistry(Scrolling, {
+			ScrollBarImageColor3 = "AccentColor",
+		})
+
+		Library:Create("UIListLayout", {
+			Padding = UDim.new(0, 0),
+			FillDirection = Enum.FillDirection.Vertical,
+			SortOrder = Enum.SortOrder.LayoutOrder,
+			Parent = Scrolling,
+		})
+
+		Library:Create("UIPadding", {
+			PaddingTop = UDim.new(0, ListPadding),
+			PaddingBottom = UDim.new(0, ListPadding),
+			Parent = Scrolling,
+		})
+
+		--// Rows are dimmed until they matter, so the selected one reads instantly.
+		local DIM = 0.45
+		local HOVER = 0.15
+
+		local function SetRowFade(Label, Transparency)
+			Label.TextTransparency = Transparency
+
+			local Stroke = Label:FindFirstChildOfClass("UIStroke")
+
+			if Stroke then
+				Stroke.Transparency = Transparency
+			end
+		end
+
+		function Listbox:GetVisibleValues()
+			local Filter = tostring(Listbox.Filter or ""):lower()
+			local Visible = {}
+
+			for _, Value in next, Listbox.Values do
+				if Filter == "" or string.find(tostring(Value):lower(), Filter, 1, true) then
+					table.insert(Visible, Value)
+				end
+			end
+
+			return Visible
+		end
+
+		function Listbox:IsSelected(Value)
+			if Listbox.Multi then
+				return Listbox.Value[Value] == true
+			end
+
+			return Listbox.Value == Value
+		end
+
+		function Listbox:GetActiveValues()
+			if Listbox.Multi then
+				local Count = 0
+
+				for _, Bool in next, Listbox.Value do
+					if Bool then
+						Count = Count + 1
+					end
+				end
+
+				return Count
+			end
+
+			return Listbox.Value and 1 or 0
+		end
+
+		function Listbox:BuildList()
+			local Rows = {}
+
+			for _, Element in next, Scrolling:GetChildren() do
+				if (not Element:IsA("UIListLayout")) and (not Element:IsA("UIPadding")) then
+					Element:Destroy()
+				end
+			end
+
+			local Visible = Listbox:GetVisibleValues()
+
+			if #Visible == 0 then
+				local EmptyLabel = Library:CreateLabel({
+					Size = UDim2.new(1, -6, 0, RowHeight),
+					TextSize = 12,
+					Text = Info.EmptyText or "No results",
+					TextXAlignment = Enum.TextXAlignment.Center,
+					ZIndex = 8,
+					Parent = Scrolling,
+				})
+
+				SetRowFade(EmptyLabel, 0.6)
+
+				Scrolling.CanvasSize = UDim2.fromOffset(0, RowHeight + (ListPadding * 2))
+
+				return
+			end
+
+			for _, Value in next, Visible do
+				local Row = {}
+
+				local RowLabel = Library:CreateLabel({
+					Size = UDim2.new(1, -6, 0, RowHeight),
+					TextSize = 12,
+					Text = tostring(Value),
+					TextXAlignment = Enum.TextXAlignment.Center,
+					ZIndex = 8,
+					Parent = Scrolling,
+				})
+
+				local Hovered = false
+
+				function Row:Update()
+					local Selected = Listbox:IsSelected(Value)
+
+					RowLabel.TextColor3 = Selected and Library.AccentColor or Library.FontColor
+					Library.RegistryMap[RowLabel].Properties.TextColor3 = Selected and "AccentColor" or "FontColor"
+
+					SetRowFade(RowLabel, Selected and 0 or (Hovered and HOVER or DIM))
+				end
+
+				RowLabel.InputBegan:Connect(function(Input)
+					if Input.UserInputType == Enum.UserInputType.MouseMovement then
+						Hovered = true
+						Row:Update()
+
+						return
+					end
+
+					if Input.UserInputType ~= Enum.UserInputType.MouseButton1 then
+						return
+					end
+
+					local Try = not Listbox:IsSelected(Value)
+
+					--// Refuse to empty a single-select list unless AllowNull says otherwise.
+					if (not Try) and (not AllowNull) and Listbox:GetActiveValues() == 1 then
+						return
+					end
+
+					if Listbox.Multi then
+						Listbox.Value[Value] = Try or nil
+					else
+						Listbox.Value = Try and Value or nil
+					end
+
+					for _, OtherRow in next, Rows do
+						OtherRow:Update()
+					end
+
+					Library:SafeCallback(Listbox.Callback, Listbox.Value)
+					Library:SafeCallback(Listbox.Changed, Listbox.Value)
+				end)
+
+				RowLabel.InputEnded:Connect(function(Input)
+					if Input.UserInputType == Enum.UserInputType.MouseMovement then
+						Hovered = false
+						Row:Update()
+					end
+				end)
+
+				Row:Update()
+
+				table.insert(Rows, Row)
+			end
+
+			Scrolling.CanvasSize = UDim2.fromOffset(0, (#Visible * RowHeight) + (ListPadding * 2))
+		end
+
+		function Listbox:SetValues(NewValues)
+			if NewValues then
+				Listbox.Values = NewValues
+			end
+
+			--// Drop selections that are not in the new list, otherwise a player who left
+			--// stays selected forever with no row to unselect them from.
+			if Listbox.Multi then
+				for Value in next, Listbox.Value do
+					if not table.find(Listbox.Values, Value) then
+						Listbox.Value[Value] = nil
+					end
+				end
+			elseif Listbox.Value and not table.find(Listbox.Values, Listbox.Value) then
+				Listbox.Value = nil
+			end
+
+			Listbox:BuildList()
+		end
+
+		function Listbox:SetValue(Value)
+			if Listbox.Multi then
+				Listbox.Value = {}
+
+				for _, Name in next, (Value or {}) do
+					Listbox.Value[Name] = true
+				end
+			else
+				Listbox.Value = Value
+			end
+
+			Listbox:BuildList()
+
+			Library:SafeCallback(Listbox.Callback, Listbox.Value)
+			Library:SafeCallback(Listbox.Changed, Listbox.Value)
+		end
+
+		function Listbox:ClearSearch()
+			if Listbox.SearchBox then
+				Listbox.SearchBox.Text = ""
+			end
+
+			Listbox.Filter = ""
+			Listbox:BuildList()
+		end
+
+		function Listbox:OnChanged(Func)
+			Listbox.Changed = Func
+			Func(Listbox.Value)
+		end
+
+		Listbox:BuildList()
+
+		Groupbox:AddBlank(5)
+		Groupbox:Resize()
+
+		if Idx then
+			Options[Idx] = Listbox
+		end
+
+		return Listbox
+	end
+
 	function Funcs:AddToggle(Idx, Info)
 		assert(Info.Text, "AddInput: Missing `Text` string.")
 
