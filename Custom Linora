@@ -198,6 +198,26 @@ end
 function Library:MakeDraggable(Instance, Cutoff)
 	Instance.Active = true
 
+	-- Dragging the real frame re-lays out every descendant each frame, which is what
+	-- causes the stutter. Drag a lightweight ghost instead and snap the frame on release.
+	local DragPreview = Library:Create("Frame", {
+		BackgroundColor3 = Library.AccentColor,
+		BackgroundTransparency = 0.75,
+		BorderColor3 = Library.AccentColor,
+		BorderSizePixel = 2,
+		Size = Instance.Size,
+		Position = Instance.Position,
+		AnchorPoint = Instance.AnchorPoint,
+		Visible = false,
+		ZIndex = 1000,
+		Parent = ScreenGui,
+	})
+
+	Library:AddToRegistry(DragPreview, {
+		BackgroundColor3 = "AccentColor",
+		BorderColor3 = "AccentColor",
+	})
+
 	Instance.InputBegan:Connect(function(Input)
 		if Input.UserInputType == Enum.UserInputType.MouseButton1 then
 			local ObjPos = Vector2.new(Mouse.X - Instance.AbsolutePosition.X, Mouse.Y - Instance.AbsolutePosition.Y)
@@ -206,8 +226,13 @@ function Library:MakeDraggable(Instance, Cutoff)
 				return
 			end
 
+			DragPreview.Size = Instance.Size
+			DragPreview.Position = Instance.Position
+			DragPreview.AnchorPoint = Instance.AnchorPoint
+			DragPreview.Visible = true
+
 			while InputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) do
-				Instance.Position = UDim2.new(
+				DragPreview.Position = UDim2.new(
 					0,
 					Mouse.X - ObjPos.X + (Instance.Size.X.Offset * Instance.AnchorPoint.X),
 					0,
@@ -216,6 +241,9 @@ function Library:MakeDraggable(Instance, Cutoff)
 
 				RenderStepped:Wait()
 			end
+
+			Instance.Position = DragPreview.Position
+			DragPreview.Visible = false
 		end
 	end)
 end
@@ -3965,7 +3993,18 @@ function Library:CreateWindow(...)
 				CursorOutline.ZIndex = 9e8
 
 				while Toggled and ScreenGui.Parent do
+					if Library.CustomCursorEnabled == false then
+						InputService.MouseIconEnabled = State
+						Cursor.Visible = false
+						CursorOutline.Visible = false
+
+						RenderStepped:Wait()
+						continue
+					end
+
 					InputService.MouseIconEnabled = false
+					Cursor.Visible = true
+					CursorOutline.Visible = true
 
 					local mPos = InputService:GetMouseLocation()
 
@@ -3991,46 +4030,6 @@ function Library:CreateWindow(...)
 			BlurTween = TweenService:Create(MenuBlur, TweenInfo.new(FadeTime, Enum.EasingStyle.Linear), { Size = 0 })
 			BlurTween:Play()
 		end
-
-		for _, Desc in next, Outer:GetDescendants() do
-			local Properties = {}
-
-			if Desc:IsA("ImageLabel") then
-				table.insert(Properties, "ImageTransparency")
-				table.insert(Properties, "BackgroundTransparency")
-			elseif Desc:IsA("TextLabel") or Desc:IsA("TextBox") then
-				table.insert(Properties, "TextTransparency")
-			elseif Desc:IsA("Frame") or Desc:IsA("ScrollingFrame") then
-				table.insert(Properties, "BackgroundTransparency")
-			elseif Desc:IsA("UIStroke") then
-				table.insert(Properties, "Transparency")
-			end
-
-			local Cache = TransparencyCache[Desc]
-
-			if not Cache then
-				Cache = {}
-				TransparencyCache[Desc] = Cache
-			end
-
-			for _, Prop in next, Properties do
-				if not Cache[Prop] then
-					Cache[Prop] = Desc[Prop]
-				end
-
-				if Cache[Prop] == 1 then
-					continue
-				end
-
-				TweenService:Create(
-					Desc,
-					TweenInfo.new(FadeTime, Enum.EasingStyle.Linear),
-					{ [Prop] = Toggled and Cache[Prop] or 1 }
-				):Play()
-			end
-		end
-
-		task.wait(FadeTime)
 
 		Outer.Visible = Toggled
 
