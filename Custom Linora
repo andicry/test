@@ -1,4 +1,4 @@
--- from some guy on v3rm, he just did what i did but changed the font. ggs bro.
+--// best linora version cmon now 
 
 writefile(
 	"Tahoma.ttf",
@@ -25,6 +25,7 @@ local CoreGui = game:GetService("CoreGui")
 local Teams = game:GetService("Teams")
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
+local GuiService = game:GetService("GuiService")
 local TweenService = game:GetService("TweenService")
 local RenderStepped = RunService.RenderStepped
 local LocalPlayer = Players.LocalPlayer
@@ -35,6 +36,10 @@ local ProtectGui = protectgui or (syn and syn.protect_gui) or function() end
 local ScreenGui = Instance.new("ScreenGui")
 ProtectGui(ScreenGui)
 
+--// The Roblox escape menu is CoreGui as well and it draws a dim overlay across the whole
+--// screen, so at the default DisplayOrder of 0 the window sits underneath it and is a pain
+--// to read while the menu is up. Sitting above it keeps the menu working exactly as before.
+ScreenGui.DisplayOrder = 999
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Global
 ScreenGui.Parent = CoreGui
 
@@ -204,6 +209,35 @@ function Library:IsTyping()
 	return Box ~= nil and Box:IsDescendantOf(ScreenGui)
 end
 
+--[[
+	True while the mouse button that opened a drag is still down.
+
+	The escape menu takes mouse capture off the game, and IsMouseButtonPressed answers false
+	for as long as it is open. Every drag loop in here used to sit on that call, so with the
+	menu up a slider would not move and would not even take a plain click, because a slider
+	only writes its value from inside that loop. The InputObject the press arrived with keeps
+	reporting its own state either way, so the loops follow that instead.
+
+	IsMouseButtonPressed is still consulted while the menu is closed. Losing window focus can
+	swallow the release, and it was the thing keeping those loops honest before, so it stays
+	on as a second opinion rather than being thrown away.
+]]
+function Library:IsInputHeld(Input)
+	if Input.UserInputState == Enum.UserInputState.End then
+		return false
+	end
+
+	local Type = Input.UserInputType
+
+	--// Only mouse buttons can be handed to IsMouseButtonPressed, and the menu holding capture
+	--// is the one time its answer is wrong, so the state above stands on its own in both cases.
+	if Type ~= Enum.UserInputType.MouseButton1 and Type ~= Enum.UserInputType.MouseButton2 then
+		return true
+	end
+
+	return GuiService.MenuIsOpen or InputService:IsMouseButtonPressed(Type)
+end
+
 function Library:CreateLabel(Properties, IsHud)
 	local _Instance = Library:Create("TextLabel", {
 		BackgroundTransparency = 1,
@@ -259,7 +293,7 @@ function Library:MakeDraggable(Instance, Cutoff)
 			DragPreview.AnchorPoint = Instance.AnchorPoint
 			DragPreview.Visible = true
 
-			while InputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) do
+			while Library:IsInputHeld(Input) do
 				DragPreview.Position = UDim2.new(
 					0,
 					Mouse.X - ObjPos.X + (Instance.Size.X.Offset * Instance.AnchorPoint.X),
@@ -1037,7 +1071,7 @@ do
 
 		SatVibMap.InputBegan:Connect(function(Input)
 			if Input.UserInputType == Enum.UserInputType.MouseButton1 then
-				while InputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) do
+				while Library:IsInputHeld(Input) do
 					local MinX = SatVibMap.AbsolutePosition.X
 					local MaxX = MinX + SatVibMap.AbsoluteSize.X
 					local MouseX = math.clamp(Mouse.X, MinX, MaxX)
@@ -1059,7 +1093,7 @@ do
 
 		HueSelectorInner.InputBegan:Connect(function(Input)
 			if Input.UserInputType == Enum.UserInputType.MouseButton1 then
-				while InputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) do
+				while Library:IsInputHeld(Input) do
 					local MinY = HueSelectorInner.AbsolutePosition.Y
 					local MaxY = MinY + HueSelectorInner.AbsoluteSize.Y
 					local MouseY = math.clamp(Mouse.Y, MinY, MaxY)
@@ -1091,7 +1125,7 @@ do
 		if TransparencyBoxInner then
 			TransparencyBoxInner.InputBegan:Connect(function(Input)
 				if Input.UserInputType == Enum.UserInputType.MouseButton1 then
-					while InputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) do
+					while Library:IsInputHeld(Input) do
 						local MinX = TransparencyBoxInner.AbsolutePosition.X
 						local MaxX = MinX + TransparencyBoxInner.AbsoluteSize.X
 						local MouseX = math.clamp(Mouse.X, MinX, MaxX)
@@ -2806,7 +2840,7 @@ do
 				local gPos = Fill.Size.X.Offset
 				local Diff = mPos - (Fill.AbsolutePosition.X + gPos)
 
-				while InputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) do
+				while Library:IsInputHeld(Input) do
 					local nMPos = Mouse.X
 					local nX = math.clamp(gPos + (nMPos - mPos) + Diff, 0, Slider.MaxSize)
 
