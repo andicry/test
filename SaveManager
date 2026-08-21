@@ -1,10 +1,9 @@
--- Aurora  SaveManager
 
 
 local httpService = game:GetService('HttpService')
 
 local SaveManager = {} do
-    SaveManager.Folder = 'AuroraSettings'
+    SaveManager.Folder = 'LinoraSettings'
     SaveManager.Ignore = {}
     SaveManager.Parser = {
         Toggle = {
@@ -64,6 +63,34 @@ local SaveManager = {} do
             Load = function(idx, data)
                 if SaveManager.Options[idx] and type(data.text) == 'string' then
                     SaveManager.Options[idx]:SetValue(data.text)
+                end
+            end,
+        },
+        -- Listbox is ours, so it needs its own entry or every list silently skips the save.
+        -- A multi listbox holds its picks as a set but takes them back as a plain list, so
+        -- the set is flattened on the way out and handed straight back on the way in.
+        Listbox = {
+            Save = function(idx, object)
+                local value = object.Value
+
+                if object.Multi then
+                    local picked = {}
+
+                    for name, state in next, value or {} do
+                        if state then
+                            table.insert(picked, name)
+                        end
+                    end
+
+                    table.sort(picked)
+                    value = picked
+                end
+
+                return { type = 'Listbox', idx = idx, value = value, multi = object.Multi }
+            end,
+            Load = function(idx, data)
+                if SaveManager.Options[idx] then
+                    SaveManager.Options[idx]:SetValue(data.value)
                 end
             end,
         },
@@ -197,6 +224,7 @@ local SaveManager = {} do
     function SaveManager:BuildConfigSection(tab)
         assert(self.Library, 'Must set SaveManager.Library first!')
 
+        --// Two columns only. Configuration sits under Watermark and Terrain on the right.
         local section = tab:AddRightGroupbox('Configuration')
 
         section:AddInput('SaveManager_ConfigName',    { Text = 'Config name' })
