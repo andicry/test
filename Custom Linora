@@ -63,11 +63,12 @@ local Library = {
 	NotificationOutAnim = "fade",
 	NotificationAnimTime = 0.35,
 
+	--// Primordial, so the window never flashes another palette before the theme manager loads
 	FontColor = Color3.fromRGB(255, 255, 255),
 	DisabledColor = Color3.fromRGB(65, 65, 65),
-	MainColor = Color3.fromRGB(28, 28, 28),
-	BackgroundColor = Color3.fromRGB(20, 20, 20),
-	AccentColor = Color3.fromRGB(243, 201, 107),
+	MainColor = Color3.fromRGB(23, 23, 23),
+	BackgroundColor = Color3.fromRGB(28, 28, 28),
+	AccentColor = Color3.fromRGB(194, 145, 156),
 	OutlineColor = Color3.fromRGB(50, 50, 50),
 	RiskColor = Color3.fromRGB(200, 50, 50),
 
@@ -82,6 +83,16 @@ local Library = {
 
 	Signals = {},
 	ScreenGui = ScreenGui,
+
+	--[[
+		The two element tables hang off the library as well as off getgenv.
+
+		The theme manager reads self.Library.Options to reach the theme dropdown, and the save
+		manager copies library.Options and library.Toggles straight into itself, so without these
+		two lines the theme box errors on load and every config save quietly writes nothing.
+	]]
+	Options = Options,
+	Toggles = Toggles,
 }
 
 local RainbowStep = 0
@@ -2281,7 +2292,7 @@ do
 			TopImage = "rbxasset://textures/ui/Scroll/scroll-middle.png",
 			BottomImage = "rbxasset://textures/ui/Scroll/scroll-middle.png",
 
-			ScrollBarThickness = 3,
+			ScrollBarThickness = 0, --// Hidden bar, wheel still scrolls
 			ScrollBarImageColor3 = Library.AccentColor,
 		})
 
@@ -3129,7 +3140,7 @@ do
 			TopImage = "rbxasset://textures/ui/Scroll/scroll-middle.png",
 			BottomImage = "rbxasset://textures/ui/Scroll/scroll-middle.png",
 
-			ScrollBarThickness = 3,
+			ScrollBarThickness = 0, --// Hidden bar, wheel still scrolls
 			ScrollBarImageColor3 = Library.AccentColor,
 		})
 
@@ -3714,7 +3725,7 @@ do
 			TopImage = "rbxasset://textures/ui/Scroll/scroll-middle.png",
 			BottomImage = "rbxasset://textures/ui/Scroll/scroll-middle.png",
 
-			ScrollBarThickness = 3,
+			ScrollBarThickness = 0, --// Hidden bar, wheel still scrolls
 			ScrollBarImageColor3 = Library.AccentColor,
 		})
 
@@ -4830,19 +4841,6 @@ function Library:Notify(Text, Time)
 		Parent = InnerFrame,
 	})
 
-	local LeftColor = Library:Create("Frame", {
-		BackgroundColor3 = Library.AccentColor,
-		BorderSizePixel = 0,
-		Position = UDim2.new(0, 0, 0, 0),
-		Size = UDim2.new(0, 3, 1, 0),
-		ZIndex = 104,
-		Parent = NotifyOuter,
-	})
-
-	Library:AddToRegistry(LeftColor, {
-		BackgroundColor3 = "AccentColor",
-	}, true)
-
 	local FadeTargets = CollectFadeTargets(NotifyOuter)
 
 	local function Slide(Goal, Style, Direction)
@@ -5212,14 +5210,21 @@ function Library:CreateWindow(...)
 			}),
 		})
 
+		--[[
+			Both sides fill the tab frame instead of carrying a fixed pixel height.
+
+			They used to be 509px tall no matter how big the window was, so a column with more
+			groupboxes than that would hang straight out of the bottom of the window with no way
+			to reach what was cut off. Sizing to (1, -14) keeps them inside the frame at every
+			window size and lets the scrolling frame do what it was already there to do.
+		]]
 		local LeftSide = Library:Create("ScrollingFrame", {
 			BackgroundTransparency = 1,
 			BorderSizePixel = 0,
 			Position = UDim2.new(0, 8 - 1, 0, 8 - 1),
-			Size = UDim2.new(0.5, -12 + 2, 0, 507 + 2),
+			Size = UDim2.new(0.5, -12 + 2, 1, -14),
 			CanvasSize = UDim2.new(0, 0, 0, 0),
-			BottomImage = "",
-			TopImage = "",
+			ScrollingDirection = Enum.ScrollingDirection.Y,
 			ScrollBarThickness = 0,
 			ZIndex = 2,
 			Parent = TabFrame,
@@ -5229,14 +5234,14 @@ function Library:CreateWindow(...)
 			BackgroundTransparency = 1,
 			BorderSizePixel = 0,
 			Position = UDim2.new(0.5, 4 + 1, 0, 8 - 1),
-			Size = UDim2.new(0.5, -12 + 2, 0, 507 + 2),
+			Size = UDim2.new(0.5, -12 + 2, 1, -14),
 			CanvasSize = UDim2.new(0, 0, 0, 0),
-			BottomImage = "",
-			TopImage = "",
+			ScrollingDirection = Enum.ScrollingDirection.Y,
 			ScrollBarThickness = 0,
 			ZIndex = 2,
 			Parent = TabFrame,
 		})
+
 
 		--// Two columns, left and right. Groupboxes stack down whichever side they were
 		--// added to and the side scrolls on its own once it runs out of room.
@@ -5261,10 +5266,30 @@ function Library:CreateWindow(...)
 			Parent = RightSide,
 		})
 
+		--[[
+			Keep the canvas the same height as the stack of groupboxes.
+
+			The bar itself stays hidden - ScrollBarThickness is 0 everywhere in this library on
+			purpose, since a visible bar down the side of a column looks bad. A ScrollingFrame
+			with no bar still scrolls on the wheel, so the canvas height is the only thing that
+			has to be right for a long column to be reachable.
+		]]
+		local function RefreshSide(Side)
+			Side.CanvasSize = UDim2.fromOffset(0, Side.UIListLayout.AbsoluteContentSize.Y)
+		end
+
 		for _, Side in next, { LeftSide, RightSide } do
-			Side:WaitForChild("UIListLayout"):GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
-				Side.CanvasSize = UDim2.fromOffset(0, Side.UIListLayout.AbsoluteContentSize.Y)
+			Side:WaitForChild("UIListLayout")
+
+			Side.UIListLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+				RefreshSide(Side)
 			end)
+
+			Side:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
+				RefreshSide(Side)
+			end)
+
+			RefreshSide(Side)
 		end
 
 		function Tab:ShowTab()
@@ -5484,12 +5509,10 @@ function Library:CreateWindow(...)
 				end
 
 				Container.CanvasSize = UDim2.new(0, 0, 0, ContentHeight)
-				Container.ScrollBarThickness = ContentHeight > Container.AbsoluteSize.Y and 1 or 0
 			end
 
 			Layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
 				Container.CanvasSize = UDim2.new(0, 0, 0, Layout.AbsoluteContentSize.Y)
-				Container.ScrollBarThickness = Layout.AbsoluteContentSize.Y > Container.AbsoluteSize.Y and 1 or 0
 			end)
 
 			function Scrollbox:Resize() end
