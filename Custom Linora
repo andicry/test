@@ -210,32 +210,105 @@ function Library:IsTyping()
 end
 
 --[[
-	True while the mouse button that opened a drag is still down.
+	Pointer position for a drag, in the same space as AbsolutePosition.
 
-	The escape menu takes mouse capture off the game, and IsMouseButtonPressed answers false
-	for as long as it is open. Every drag loop in here used to sit on that call, so with the
-	menu up a slider would not move and would not even take a plain click, because a slider
-	only writes its value from inside that loop. The InputObject the press arrived with keeps
-	reporting its own state either way, so the loops follow that instead.
-
-	IsMouseButtonPressed is still consulted while the menu is closed. Losing window focus can
-	swallow the release, and it was the thing keeping those loops honest before, so it stays
-	on as a second opinion rather than being thrown away.
+	Input.Position on a mouse or touch press already has the GUI inset taken off, so it lines
+	up with AbsolutePosition as it stands. GetMouseLocation does not, so the fallback takes the
+	inset off itself before handing the value over.
 ]]
-function Library:IsInputHeld(Input)
-	if Input.UserInputState == Enum.UserInputState.End then
-		return false
+function Library:GetInputPosition(Input)
+	if Input and Input.Position then
+		return Input.Position.X, Input.Position.Y
 	end
 
-	local Type = Input.UserInputType
+	local Pos = InputService:GetMouseLocation() - GuiService:GetGuiInset()
 
-	--// Only mouse buttons can be handed to IsMouseButtonPressed, and the menu holding capture
-	--// is the one time its answer is wrong, so the state above stands on its own in both cases.
-	if Type ~= Enum.UserInputType.MouseButton1 and Type ~= Enum.UserInputType.MouseButton2 then
-		return true
+	return Pos.X, Pos.Y
+end
+
+--// Mouse and touch both open drags, and everything downstream treats the two the same.
+function Library:IsPrimaryInput(Input)
+	return Input.UserInputType == Enum.UserInputType.MouseButton1
+		or Input.UserInputType == Enum.UserInputType.Touch
+end
+
+--[[
+	Runs a drag off input events rather than polling the mouse.
+
+	The escape menu takes mouse capture off the game, and for as long as it is open
+	IsMouseButtonPressed answers false. Every drag in here used to be a loop sitting on that
+	call, so with the menu up a slider took neither a drag nor even a plain click, because the
+	value was only ever written from inside the loop. Toggles and dropdowns kept working the
+	whole time precisely because they are one InputBegan handler with no loop behind them.
+
+	InputChanged keeps firing with the menu up and the InputObject keeps reporting its own
+	state, so drags ride on those two signals instead. Apply runs once up front, which is what
+	makes a single click land, then again on every pointer move until the button comes back up.
+]]
+function Library:BindDrag(Input, Apply, Finish)
+	Apply(Library:GetInputPosition(Input))
+
+	local Dragging = true
+	local MoveConnection
+	local StateConnection
+
+	local function Stop()
+		if not Dragging then
+			return
+		end
+
+		Dragging = false
+
+		if MoveConnection then
+			MoveConnection:Disconnect()
+		end
+
+		if StateConnection then
+			StateConnection:Disconnect()
+		end
+
+		if Finish then
+			Finish()
+		end
 	end
 
-	return GuiService.MenuIsOpen or InputService:IsMouseButtonPressed(Type)
+	StateConnection = Input:GetPropertyChangedSignal("UserInputState"):Connect(function()
+		if
+			Input.UserInputState == Enum.UserInputState.End
+			or Input.UserInputState == Enum.UserInputState.Cancel
+		then
+			Stop()
+		end
+	end)
+
+	MoveConnection = InputService.InputChanged:Connect(function(Changed)
+		if not Dragging then
+			return
+		end
+
+		--// A mouse drag is followed through MouseMovement, a touch drag through the touch itself.
+		local IsMouseMove = Input.UserInputType == Enum.UserInputType.MouseButton1
+			and Changed.UserInputType == Enum.UserInputType.MouseMovement
+		local IsTouchMove = Input.UserInputType == Enum.UserInputType.Touch
+			and Changed.UserInputType == Enum.UserInputType.Touch
+
+		if not IsMouseMove and not IsTouchMove then
+			return
+		end
+
+		Apply(Library:GetInputPosition(Changed))
+	end)
+
+	--// A click short enough to have ended already never fires the change signal, so that one
+	--// case is checked by hand instead of leaving the two connections behind.
+	if
+		Input.UserInputState == Enum.UserInputState.End
+		or Input.UserInputState == Enum.UserInputState.Cancel
+	then
+		Stop()
+	end
+
+	return Stop
 end
 
 function Library:CreateLabel(Properties, IsHud)
@@ -281,8 +354,9 @@ function Library:MakeDraggable(Instance, Cutoff)
 	})
 
 	Instance.InputBegan:Connect(function(Input)
-		if Input.UserInputType == Enum.UserInputType.MouseButton1 then
-			local ObjPos = Vector2.new(Mouse.X - Instance.AbsolutePosition.X, Mouse.Y - Instance.AbsolutePosition.Y)
+		if Library:IsPrimaryInput(Input) then
+			local StartX, StartY = Library:GetInputPosition(Input)
+			local ObjPos = Vector2.new(StartX - Instance.AbsolutePosition.X, StartY - Instance.AbsolutePosition.Y)
 
 			if ObjPos.Y > (Cutoff or 40) then
 				return
@@ -293,19 +367,17 @@ function Library:MakeDraggable(Instance, Cutoff)
 			DragPreview.AnchorPoint = Instance.AnchorPoint
 			DragPreview.Visible = true
 
-			while Library:IsInputHeld(Input) do
+			Library:BindDrag(Input, function(PointerX, PointerY)
 				DragPreview.Position = UDim2.new(
 					0,
-					Mouse.X - ObjPos.X + (Instance.Size.X.Offset * Instance.AnchorPoint.X),
+					PointerX - ObjPos.X + (Instance.Size.X.Offset * Instance.AnchorPoint.X),
 					0,
-					Mouse.Y - ObjPos.Y + (Instance.Size.Y.Offset * Instance.AnchorPoint.Y)
+					PointerY - ObjPos.Y + (Instance.Size.Y.Offset * Instance.AnchorPoint.Y)
 				)
-
-				RenderStepped:Wait()
-			end
-
-			Instance.Position = DragPreview.Position
-			DragPreview.Visible = false
+			end, function()
+				Instance.Position = DragPreview.Position
+				DragPreview.Visible = false
+			end)
 		end
 	end)
 end
@@ -1070,41 +1142,37 @@ do
 		end
 
 		SatVibMap.InputBegan:Connect(function(Input)
-			if Input.UserInputType == Enum.UserInputType.MouseButton1 then
-				while Library:IsInputHeld(Input) do
+			if Library:IsPrimaryInput(Input) then
+				Library:BindDrag(Input, function(PointerX, PointerY)
 					local MinX = SatVibMap.AbsolutePosition.X
 					local MaxX = MinX + SatVibMap.AbsoluteSize.X
-					local MouseX = math.clamp(Mouse.X, MinX, MaxX)
+					local MouseX = math.clamp(PointerX, MinX, MaxX)
 
 					local MinY = SatVibMap.AbsolutePosition.Y
 					local MaxY = MinY + SatVibMap.AbsoluteSize.Y
-					local MouseY = math.clamp(Mouse.Y, MinY, MaxY)
+					local MouseY = math.clamp(PointerY, MinY, MaxY)
 
 					ColorPicker.Sat = (MouseX - MinX) / (MaxX - MinX)
 					ColorPicker.Vib = 1 - ((MouseY - MinY) / (MaxY - MinY))
 					ColorPicker:Display()
-
-					RenderStepped:Wait()
-				end
-
-				Library:AttemptSave()
+				end, function()
+					Library:AttemptSave()
+				end)
 			end
 		end)
 
 		HueSelectorInner.InputBegan:Connect(function(Input)
-			if Input.UserInputType == Enum.UserInputType.MouseButton1 then
-				while Library:IsInputHeld(Input) do
+			if Library:IsPrimaryInput(Input) then
+				Library:BindDrag(Input, function(_, PointerY)
 					local MinY = HueSelectorInner.AbsolutePosition.Y
 					local MaxY = MinY + HueSelectorInner.AbsoluteSize.Y
-					local MouseY = math.clamp(Mouse.Y, MinY, MaxY)
+					local MouseY = math.clamp(PointerY, MinY, MaxY)
 
 					ColorPicker.Hue = ((MouseY - MinY) / (MaxY - MinY))
 					ColorPicker:Display()
-
-					RenderStepped:Wait()
-				end
-
-				Library:AttemptSave()
+				end, function()
+					Library:AttemptSave()
+				end)
 			end
 		end)
 
@@ -1124,20 +1192,18 @@ do
 
 		if TransparencyBoxInner then
 			TransparencyBoxInner.InputBegan:Connect(function(Input)
-				if Input.UserInputType == Enum.UserInputType.MouseButton1 then
-					while Library:IsInputHeld(Input) do
+				if Library:IsPrimaryInput(Input) then
+					Library:BindDrag(Input, function(PointerX)
 						local MinX = TransparencyBoxInner.AbsolutePosition.X
 						local MaxX = MinX + TransparencyBoxInner.AbsoluteSize.X
-						local MouseX = math.clamp(Mouse.X, MinX, MaxX)
+						local MouseX = math.clamp(PointerX, MinX, MaxX)
 
 						ColorPicker.Transparency = 1 - ((MouseX - MinX) / (MaxX - MinX))
 
 						ColorPicker:Display()
-
-						RenderStepped:Wait()
-					end
-
-					Library:AttemptSave()
+					end, function()
+						Library:AttemptSave()
+					end)
 				end
 			end)
 		end
@@ -2779,6 +2845,17 @@ do
 			Fill.BorderColor3 = Library.AccentColorDark
 		end
 
+		--[[
+			The bar spans a whole column, so its width is read off the frame rather than assumed.
+			A drag maps the pointer across that same width, so the two have to agree. AbsoluteSize
+			is zero until the frame has been laid out, and the default stands until then.
+		]]
+		function Slider:RefreshMaxSize()
+			if SliderInner.AbsoluteSize.X > 0 then
+				Slider.MaxSize = SliderInner.AbsoluteSize.X
+			end
+		end
+
 		function Slider:Display()
 			local Suffix = Info.Suffix or ""
 
@@ -2789,6 +2866,8 @@ do
 			else
 				DisplayLabel.Text = string.format("%s/%s", Slider.Value .. Suffix, Slider.Max .. Suffix)
 			end
+
+			Slider:RefreshMaxSize()
 
 			local X = math.ceil(Library:MapValue(Slider.Value, Slider.Min, Slider.Max, 0, Slider.MaxSize))
 			Fill.Size = UDim2.new(0, X, 1, 0)
@@ -2835,30 +2914,24 @@ do
 		end
 
 		SliderInner.InputBegan:Connect(function(Input)
-			if Input.UserInputType == Enum.UserInputType.MouseButton1 and not Library:MouseIsOverOpenedFrame() then
-				local mPos = Mouse.X
-				local gPos = Fill.Size.X.Offset
-				local Diff = mPos - (Fill.AbsolutePosition.X + gPos)
+			if Library:IsPrimaryInput(Input) and not Library:MouseIsOverOpenedFrame() then
+				Library:BindDrag(Input, function(PointerX)
+					Slider:RefreshMaxSize()
 
-				while Library:IsInputHeld(Input) do
-					local nMPos = Mouse.X
-					local nX = math.clamp(gPos + (nMPos - mPos) + Diff, 0, Slider.MaxSize)
-
+					local nX = math.clamp(PointerX - SliderInner.AbsolutePosition.X, 0, Slider.MaxSize)
 					local nValue = Slider:GetValueFromXOffset(nX)
 					local OldValue = Slider.Value
-					Slider.Value = nValue
 
+					Slider.Value = nValue
 					Slider:Display()
 
 					if nValue ~= OldValue then
 						Library:SafeCallback(Slider.Callback, Slider.Value)
 						Library:SafeCallback(Slider.Changed, Slider.Value)
 					end
-
-					RenderStepped:Wait()
-				end
-
-				Library:AttemptSave()
+				end, function()
+					Library:AttemptSave()
+				end)
 			end
 		end)
 
