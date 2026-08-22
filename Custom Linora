@@ -201,6 +201,67 @@ function Library:ApplyTextStroke(Inst)
 	})
 end
 
+--[[
+	Turns whatever an image field holds into something an ImageLabel will take.
+
+	Asset ids show up as numbers, as rbxassetid strings, or as bare digits depending on which
+	config wrote them, and some hand over a plain http URL instead, which ImageLabel cannot load
+	at all. A URL is fetched once and written to disk, because getcustomasset needs a real file,
+	and the result is remembered so the same skin does not re-download every time it is picked.
+]]
+local ImageCache = {}
+
+function Library:ResolveImage(Src)
+	if type(Src) == "number" then
+		return "rbxassetid://" .. Src
+	end
+
+	if type(Src) ~= "string" or Src == "" then
+		return nil
+	end
+
+	--// rbxassetid:// and rbxthumb:// are already what we want
+	if Src:match("^rbx") then
+		return Src
+	end
+
+	if Src:match("^%d+$") then
+		return "rbxassetid://" .. Src
+	end
+
+	if not Src:match("^https?://") then
+		return nil
+	end
+
+	if ImageCache[Src] then
+		return ImageCache[Src]
+	end
+
+	pcall(function()
+		if not isfolder("LinoraAssets") then
+			makefolder("LinoraAssets")
+		end
+
+		--// Named off the URL so the cache survives a rejoin, trimmed because a long query
+		--// string makes a filename the filesystem will not take
+		local File = "LinoraAssets/" .. Src:gsub("[^%w]", ""):sub(-40) .. ".png"
+
+		if not isfile(File) then
+			local Data = game:HttpGet(Src)
+
+			if type(Data) == "string" and #Data > 100 then
+				writefile(File, Data)
+			end
+		end
+
+		if isfile(File) then
+			ImageCache[Src] = getcustomasset(File)
+		end
+	end)
+
+	return ImageCache[Src]
+end
+
 --// Fades a label made by CreateLabel. ApplyTextStroke parents a real UIStroke, so the
 --// stroke has to fade along with the text or a dimmed row keeps a solid black outline
 --// around ghost grey letters.
@@ -3272,6 +3333,110 @@ do
 		end
 
 		return Curve
+	end
+
+	--[[
+		A dark panel holding one image, scaled to fit rather than stretched. A skin render is
+		what it was built for.
+
+		Info.Image goes through Library:ResolveImage, so an asset id number, an rbxassetid
+		string, bare digits or an http URL all work. OutlineColorIdx takes a theme key, so the
+		border can follow the accent colour instead of sitting on the default outline grey.
+	]]
+	function Funcs:AddImage(Idx, Info)
+		Info = Info or {}
+
+		local Image = {
+			Value = Info.Image,
+			Height = Info.Height or 150,
+			Type = "Image",
+		}
+
+		local Groupbox = self
+		local Container = Groupbox.Container
+		local OutlineIdx = Info.OutlineColorIdx or "OutlineColor"
+
+		if Info.Text then
+			Library:CreateLabel({
+				Size = UDim2.new(1, 0, 0, 15),
+				TextSize = 12,
+				Text = Info.Text,
+				TextXAlignment = Enum.TextXAlignment.Left,
+				ZIndex = 5,
+				Parent = Container,
+			})
+
+			Groupbox:AddBlank(1)
+		end
+
+		local ImageOuter = Library:Create("Frame", {
+			BackgroundColor3 = Color3.new(0, 0, 0),
+			BorderColor3 = Color3.new(0, 0, 0),
+			Size = UDim2.new(1, -4, 0, Image.Height),
+			ZIndex = 5,
+			Parent = Container,
+		})
+
+		local ImageInner = Library:Create("Frame", {
+			BackgroundColor3 = Library.BackgroundColor,
+			BorderColor3 = Library[OutlineIdx] or Library.OutlineColor,
+			BorderMode = Enum.BorderMode.Inset,
+			Size = UDim2.new(1, 0, 1, 0),
+			ZIndex = 6,
+			Parent = ImageOuter,
+		})
+
+		Library:AddToRegistry(ImageOuter, {
+			BorderColor3 = "Black",
+		})
+
+		Library:AddToRegistry(ImageInner, {
+			BackgroundColor3 = "BackgroundColor",
+			BorderColor3 = OutlineIdx,
+		})
+
+		local Render = Library:Create("ImageLabel", {
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			Position = UDim2.new(0, 6, 0, 6),
+			Size = UDim2.new(1, -12, 1, -12),
+			ScaleType = Info.ScaleType or Enum.ScaleType.Fit,
+			ImageTransparency = Info.Transparency or 0,
+			Image = Library:ResolveImage(Info.Image) or "",
+			ZIndex = 7,
+			Parent = ImageInner,
+		})
+
+		if type(Info.Tooltip) == "string" then
+			Library:AddToolTip(Info.Tooltip, ImageOuter)
+		end
+
+		--// Nil or an id that will not resolve empties the panel rather than leaving the last
+		--// skin on screen, which would read as the wrong one being selected
+		function Image:SetImage(Src)
+			Image.Value = Src
+			Render.Image = Library:ResolveImage(Src) or ""
+		end
+
+		function Image:SetTransparency(Value)
+			Render.ImageTransparency = Value or 0
+		end
+
+		--// Resize only counts visible children, so hiding the panel closes the gap it left
+		function Image:SetVisible(Bool)
+			ImageOuter.Visible = not not Bool
+
+			Groupbox:Resize()
+		end
+
+		Groupbox:AddBlank(Info.BlankSize or 6)
+		Groupbox:Resize()
+
+		if Idx then
+			Options[Idx] = Image
+		end
+
+		return Image
 	end
 
 	function Funcs:AddDropdown(Idx, Info)
