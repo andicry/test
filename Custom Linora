@@ -56,6 +56,8 @@ local Library = {
 
 	HudRegistry = {},
 
+	SpeedGraphInstances = {},
+
 	GlowObjects = {},
 	GlowTransparency = 0.5,
 
@@ -633,6 +635,9 @@ function Library:Unload()
 		local Connection = table.remove(Library.Signals, Idx)
 		Connection:Disconnect()
 	end
+
+	-- Drop the speed graph handles. Their frames live under the ScreenGui destroyed below
+	table.clear(Library.SpeedGraphInstances)
 
 	-- Call our unload callback, maybe to undo some hooks etc
 	if Library.OnUnload then
@@ -2953,6 +2958,320 @@ do
 		Options[Idx] = Slider
 
 		return Slider
+	end
+
+	--[[
+		A row of points on a grid, each dragged up or down, with the line between them drawn
+		as a run of small squares.
+
+		Only Y moves. X is pinned to the grid column the point was created on, so the whole
+		curve is one number per point and a config can hold it as a plain array. Dragging goes
+		through BindDrag for the same reason every other drag in here does - a polling loop on
+		IsMouseButtonPressed takes neither a drag nor a click while the escape menu is open.
+	]]
+	function Funcs:AddCurve(Idx, Info)
+		Info = Info or {}
+
+		local PointCount = math.max(2, Info.Points or 9)
+		local Divisions = PointCount - 1
+		local PixelsPerSegment = Info.Smoothness or 20
+
+		local Curve = {
+			Value = {},
+			Points = {},
+			Pixels = {},
+			PointCount = PointCount,
+			Height = Info.Height or 150,
+			Type = "Curve",
+			Callback = Info.Callback or function(Value) end,
+		}
+
+		local Groupbox = self
+		local Container = Groupbox.Container
+
+		if Info.Text then
+			Library:CreateLabel({
+				Size = UDim2.new(1, 0, 0, 15),
+				TextSize = 12,
+				Text = Info.Text,
+				TextXAlignment = Enum.TextXAlignment.Left,
+				ZIndex = 5,
+				Parent = Container,
+			})
+
+			Groupbox:AddBlank(1)
+		end
+
+		local CurveOuter = Library:Create("Frame", {
+			BackgroundColor3 = Color3.new(0, 0, 0),
+			BorderColor3 = Color3.new(0, 0, 0),
+			Size = UDim2.new(1, -4, 0, Curve.Height),
+			ZIndex = 5,
+			Parent = Container,
+		})
+
+		local CurveInner = Library:Create("Frame", {
+			BackgroundColor3 = Library.MainColor,
+			BorderColor3 = Library.OutlineColor,
+			BorderMode = Enum.BorderMode.Inset,
+			Size = UDim2.new(1, 0, 1, 0),
+			ZIndex = 6,
+			Parent = CurveOuter,
+		})
+
+		Library:AddToRegistry(CurveOuter, {
+			BorderColor3 = "Black",
+		})
+
+		Library:AddToRegistry(CurveInner, {
+			BackgroundColor3 = "MainColor",
+			BorderColor3 = "OutlineColor",
+		})
+
+		Library:Create("UIGradient", {
+			Rotation = 90,
+			Parent = CurveInner,
+			Color = ColorSequence.new({
+				ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 255, 255)),
+				ColorSequenceKeypoint.new(1, Color3.fromRGB(235, 235, 235)),
+			}),
+		})
+
+		--// Inset instead of clipped, so the points sitting on the far left and right edges are
+		--// drawn whole rather than sliced in half by the border.
+		local Canvas = Library:Create("Frame", {
+			BackgroundTransparency = 1,
+			Position = UDim2.new(0, 6, 0, 6),
+			Size = UDim2.new(1, -12, 1, -12),
+			ZIndex = 7,
+			Parent = CurveInner,
+		})
+
+		for i = 1, Divisions - 1 do
+			local Column = Library:Create("Frame", {
+				BackgroundColor3 = Library.OutlineColor,
+				BorderSizePixel = 0,
+				Position = UDim2.new(i / Divisions, 0, 0, 0),
+				Size = UDim2.new(0, 1, 1, 0),
+				ZIndex = 7,
+				Parent = Canvas,
+			})
+
+			local Row = Library:Create("Frame", {
+				BackgroundColor3 = Library.OutlineColor,
+				BorderSizePixel = 0,
+				Position = UDim2.new(0, 0, i / Divisions, 0),
+				Size = UDim2.new(1, 0, 0, 1),
+				ZIndex = 7,
+				Parent = Canvas,
+			})
+
+			Library:AddToRegistry(Column, {
+				BackgroundColor3 = "OutlineColor",
+			})
+
+			Library:AddToRegistry(Row, {
+				BackgroundColor3 = "OutlineColor",
+			})
+		end
+
+		--// The line is a fixed pool of squares laid along the segments, so a drag only moves
+		--// what already exists instead of building and throwing away frames every step.
+		for i = 1, Divisions * PixelsPerSegment do
+			local Pixel = Library:Create("Frame", {
+				BackgroundColor3 = Library.AccentColor,
+				BorderSizePixel = 0,
+				AnchorPoint = Vector2.new(0.5, 0.5),
+				Size = UDim2.fromOffset(3, 3),
+				ZIndex = 8,
+				Parent = Canvas,
+			})
+
+			Library:AddToRegistry(Pixel, {
+				BackgroundColor3 = "AccentColor",
+			})
+
+			table.insert(Curve.Pixels, Pixel)
+		end
+
+		for i = 1, PointCount do
+			local X = (i - 1) / Divisions
+			local Y = 0.5
+
+			if type(Info.Default) == "table" then
+				local Given = Info.Default[i]
+
+				if type(Given) == "table" then
+					Given = Given.Y
+				end
+
+				if type(Given) == "number" then
+					Y = math.clamp(Given, 0, 1)
+				end
+			end
+
+			local PointFrame = Library:Create("Frame", {
+				BackgroundColor3 = Library.AccentColor,
+				BorderColor3 = Color3.new(0, 0, 0),
+				BorderSizePixel = 1,
+				AnchorPoint = Vector2.new(0.5, 0.5),
+				Position = UDim2.new(X, 0, Y, 0),
+				Size = UDim2.fromOffset(8, 8),
+				ZIndex = 9,
+				Parent = Canvas,
+			})
+
+			Library:AddToRegistry(PointFrame, {
+				BackgroundColor3 = "AccentColor",
+			})
+
+			Curve.Points[i] = { Frame = PointFrame, Index = i, X = X, Y = Y }
+			Curve.Value[i] = Y
+		end
+
+		Library:OnHighlight(CurveOuter, CurveOuter, { BorderColor3 = "AccentColor" }, { BorderColor3 = "Black" })
+
+		if type(Info.Tooltip) == "string" then
+			Library:AddToolTip(Info.Tooltip, CurveOuter)
+		end
+
+		function Curve:Redraw()
+			local Index = 1
+
+			for i = 1, Divisions do
+				local From = Curve.Points[i]
+				local To = Curve.Points[i + 1]
+
+				for j = 0, PixelsPerSegment - 1 do
+					local Alpha = j / PixelsPerSegment
+					local Pixel = Curve.Pixels[Index]
+
+					if Pixel then
+						Pixel.Position = UDim2.new(
+							From.X + (To.X - From.X) * Alpha,
+							0,
+							From.Y + (To.Y - From.Y) * Alpha,
+							0
+						)
+					end
+
+					Index = Index + 1
+				end
+			end
+		end
+
+		function Curve:GetPoints()
+			local Points = {}
+
+			for i = 1, PointCount do
+				local Point = Curve.Points[i]
+
+				Points[i] = { Index = i, X = Point.X, Y = Point.Y }
+			end
+
+			return Points
+		end
+
+		function Curve:OnChanged(Func)
+			Curve.Changed = Func
+			Func(Curve.Value)
+		end
+
+		--// Takes a plain array of Y values, or the { X = , Y = } rows GetPoints hands back, so
+		--// a config written from either shape loads.
+		function Curve:SetValue(Value)
+			if type(Value) ~= "table" then
+				return
+			end
+
+			for i = 1, PointCount do
+				local Point = Curve.Points[i]
+				local New = Value[i]
+
+				if type(New) == "table" then
+					New = New.Y
+				end
+
+				if type(New) == "number" then
+					Point.Y = math.clamp(New, 0, 1)
+					Curve.Value[i] = Point.Y
+					Point.Frame.Position = UDim2.new(Point.X, 0, Point.Y, 0)
+				end
+			end
+
+			Curve:Redraw()
+
+			Library:SafeCallback(Curve.Callback, Curve.Value)
+			Library:SafeCallback(Curve.Changed, Curve.Value)
+		end
+
+		function Curve:SetCurvePoints(Value)
+			Curve:SetValue(Value)
+		end
+
+		--[[
+			A press anywhere on the canvas grabs the point nearest the pointer by column and
+			drags that one, so a plain click on a point lands on it and a sweep across the box
+			pulls each column to the cursor in turn.
+		]]
+		Canvas.InputBegan:Connect(function(Input)
+			if not Library:IsPrimaryInput(Input) or Library:MouseIsOverOpenedFrame() then
+				return
+			end
+
+			local StartX = Library:GetInputPosition(Input)
+			local Width = Canvas.AbsoluteSize.X
+			local Point = Curve.Points[1]
+
+			if Width > 0 then
+				local nX = (StartX - Canvas.AbsolutePosition.X) / Width
+				local Closest = math.huge
+
+				for i = 1, PointCount do
+					local Distance = math.abs(Curve.Points[i].X - nX)
+
+					if Distance < Closest then
+						Closest = Distance
+						Point = Curve.Points[i]
+					end
+				end
+			end
+
+			Library:BindDrag(Input, function(PointerX, PointerY)
+				local Height = Canvas.AbsoluteSize.Y
+
+				if Height <= 0 then
+					return
+				end
+
+				local nY = math.clamp((PointerY - Canvas.AbsolutePosition.Y) / Height, 0, 1)
+				local OldY = Point.Y
+
+				Point.Y = nY
+				Curve.Value[Point.Index] = nY
+				Point.Frame.Position = UDim2.new(Point.X, 0, nY, 0)
+
+				Curve:Redraw()
+
+				if nY ~= OldY then
+					Library:SafeCallback(Curve.Callback, Curve.Value)
+					Library:SafeCallback(Curve.Changed, Curve.Value)
+				end
+			end, function()
+				Library:AttemptSave()
+			end)
+		end)
+
+		Curve:Redraw()
+
+		Groupbox:AddBlank(Info.BlankSize or 6)
+		Groupbox:Resize()
+
+		if Idx then
+			Options[Idx] = Curve
+		end
+
+		return Curve
 	end
 
 	function Funcs:AddDropdown(Idx, Info)
@@ -5906,6 +6225,307 @@ end
 
 Players.PlayerAdded:Connect(OnPlayerChange)
 Players.PlayerRemoving:Connect(OnPlayerChange)
+
+--[[
+	Speed Graph
+
+	A draggable HUD box plotting horizontal speed over time.
+
+	The line is a fixed pool of thin rotated frames, so a redraw only moves what already
+	exists. The original version built a Drawing object per segment and threw all of them away
+	every frame, which is both the choppiness and the reason it could never sit inside its own
+	border - Drawing renders in screen space and ignores ClipsDescendants.
+]]
+function Library:CreateSpeedGraph(Config)
+	Config = Config or {}
+
+	local SpeedGraph = {
+		Visible = true,
+		SpeedHistory = {},
+		Lines = {},
+		MaxHistory = math.max(2, Config.MaxHistory or 150),
+		MaxSpeed = math.max(1, Config.MaxSpeed or 200),
+		MinScale = math.max(1, Config.MinScale or 20),
+		AutoScale = Config.AutoScale ~= false,
+		Interval = Config.Interval or 0.05,
+		Thickness = Config.Thickness or 1,
+		LineColorIdx = Config.LineColorIdx or "FontColor",
+		Clock = 0,
+	}
+
+	SpeedGraph.Scale = SpeedGraph.MinScale
+
+	local GraphOuter = Library:Create("Frame", {
+		BackgroundColor3 = Color3.new(0, 0, 0),
+		BorderColor3 = Color3.new(0, 0, 0),
+		BorderSizePixel = 0,
+		Position = Config.Position or UDim2.fromOffset(50, 50),
+		Size = Config.Size or UDim2.fromOffset(300, 200),
+		ZIndex = 50,
+		Parent = ScreenGui,
+	})
+
+	local GraphInner = Library:Create("Frame", {
+		BackgroundColor3 = Library.MainColor,
+		BorderColor3 = Library.AccentColor,
+		BorderMode = Enum.BorderMode.Inset,
+		Position = UDim2.new(0, 1, 0, 1),
+		Size = UDim2.new(1, -2, 1, -2),
+		ZIndex = 51,
+		Parent = GraphOuter,
+	})
+
+	Library:AddToRegistry(GraphInner, {
+		BackgroundColor3 = "MainColor",
+		BorderColor3 = "AccentColor",
+	})
+
+	Library:CreateLabel({
+		Position = UDim2.new(0, 7, 0, 0),
+		Size = UDim2.new(1, -14, 0, 20),
+		TextSize = 14,
+		Text = Config.Title or "Speed Graph",
+		TextXAlignment = Enum.TextXAlignment.Left,
+		ZIndex = 52,
+		Parent = GraphInner,
+	})
+
+	local VelocityLabel = Library:CreateLabel({
+		Position = UDim2.new(1, -107, 0, 0),
+		Size = UDim2.new(0, 100, 0, 20),
+		TextSize = 14,
+		Text = "Velocity: 0.0",
+		TextXAlignment = Enum.TextXAlignment.Right,
+		ZIndex = 52,
+		Parent = GraphInner,
+	})
+
+	local GraphFrame = Library:Create("Frame", {
+		BackgroundColor3 = Library.BackgroundColor,
+		BorderColor3 = Library.OutlineColor,
+		Position = UDim2.new(0, 8, 0, 25),
+		Size = UDim2.new(1, -16, 1, -33),
+		ClipsDescendants = true,
+		ZIndex = 51,
+		Parent = GraphInner,
+	})
+
+	local GraphContent = Library:Create("Frame", {
+		BackgroundColor3 = Library.BackgroundColor,
+		BorderColor3 = Color3.new(0, 0, 0),
+		BorderMode = Enum.BorderMode.Inset,
+		Size = UDim2.new(1, 0, 1, 0),
+		ZIndex = 51,
+		Parent = GraphFrame,
+	})
+
+	Library:AddToRegistry(GraphFrame, {
+		BackgroundColor3 = "BackgroundColor",
+		BorderColor3 = "OutlineColor",
+	})
+
+	Library:AddToRegistry(GraphContent, {
+		BackgroundColor3 = "BackgroundColor",
+		BorderColor3 = "Black",
+	})
+
+	local function BuildPool()
+		for Idx = #SpeedGraph.Lines, 1, -1 do
+			SpeedGraph.Lines[Idx]:Destroy()
+			SpeedGraph.Lines[Idx] = nil
+		end
+
+		for i = 1, SpeedGraph.MaxHistory - 1 do
+			local Line = Library:Create("Frame", {
+				BackgroundColor3 = Library[SpeedGraph.LineColorIdx],
+				BorderSizePixel = 0,
+				AnchorPoint = Vector2.new(0.5, 0.5),
+				Size = UDim2.fromOffset(1, SpeedGraph.Thickness),
+				Visible = false,
+				ZIndex = 52,
+				Parent = GraphContent,
+			})
+
+			Library:AddToRegistry(Line, {
+				BackgroundColor3 = SpeedGraph.LineColorIdx,
+			})
+
+			SpeedGraph.Lines[i] = Line
+		end
+	end
+
+	local function HideLines()
+		for i = 1, #SpeedGraph.Lines do
+			SpeedGraph.Lines[i].Visible = false
+		end
+	end
+
+	local function Redraw()
+		local Count = #SpeedGraph.SpeedHistory
+		local Size = GraphContent.AbsoluteSize
+
+		if Count < 2 or Size.X <= 0 or Size.Y <= 0 then
+			HideLines()
+
+			return
+		end
+
+		local Scale = SpeedGraph.MaxSpeed
+
+		if SpeedGraph.AutoScale then
+			local Peak = SpeedGraph.MinScale
+
+			for i = 1, Count do
+				if SpeedGraph.SpeedHistory[i] > Peak then
+					Peak = SpeedGraph.SpeedHistory[i]
+				end
+			end
+
+			--// Eased, so the whole plot does not jump every time a new peak lands
+			SpeedGraph.Scale = SpeedGraph.Scale + (Peak - SpeedGraph.Scale) * 0.15
+			Scale = math.max(SpeedGraph.Scale, 1)
+		end
+
+		--// Newest sample pinned to the right edge, so a graph that has not filled up yet
+		--// grows inward instead of sitting squashed against the left border
+		local Step = Size.X / (SpeedGraph.MaxHistory - 1)
+		local Offset = Size.X - (Count - 1) * Step
+
+		local function PointAt(i)
+			local Height = math.clamp(SpeedGraph.SpeedHistory[i] / Scale, 0, 1)
+
+			return Offset + (i - 1) * Step, Size.Y - Height * Size.Y
+		end
+
+		for i = 1, #SpeedGraph.Lines do
+			local Line = SpeedGraph.Lines[i]
+
+			if i < Count then
+				local X1, Y1 = PointAt(i)
+				local X2, Y2 = PointAt(i + 1)
+				local dX, dY = X2 - X1, Y2 - Y1
+				local Length = math.sqrt(dX * dX + dY * dY)
+
+				Line.Position = UDim2.fromOffset(math.floor((X1 + X2) * 0.5 + 0.5), math.floor((Y1 + Y2) * 0.5 + 0.5))
+				Line.Size = UDim2.fromOffset(math.max(1, math.ceil(Length)), SpeedGraph.Thickness)
+				Line.Rotation = math.deg(math.atan2(dY, dX))
+				Line.Visible = true
+			else
+				Line.Visible = false
+			end
+		end
+	end
+
+	function SpeedGraph:UpdateSpeed(Delta)
+		if not SpeedGraph.Visible then
+			return
+		end
+
+		local Character = LocalPlayer.Character
+		local Root = Character and Character:FindFirstChild("HumanoidRootPart")
+
+		if not Root then
+			return
+		end
+
+		local Velocity = Root.AssemblyLinearVelocity
+		local Speed = math.sqrt(Velocity.X * Velocity.X + Velocity.Z * Velocity.Z)
+
+		VelocityLabel.Text = string.format("Velocity: %.1f", Speed)
+
+		--// Sampled off a clock rather than once per frame, so how much history the box shows
+		--// stays the same whether the game is running at 30 or 240
+		SpeedGraph.Clock = SpeedGraph.Clock + (Delta or 0)
+
+		if SpeedGraph.Clock < SpeedGraph.Interval then
+			return
+		end
+
+		SpeedGraph.Clock = 0
+
+		table.insert(SpeedGraph.SpeedHistory, Speed)
+
+		while #SpeedGraph.SpeedHistory > SpeedGraph.MaxHistory do
+			table.remove(SpeedGraph.SpeedHistory, 1)
+		end
+
+		Redraw()
+	end
+
+	function SpeedGraph:SetVisible(Bool)
+		SpeedGraph.Visible = not not Bool
+		GraphOuter.Visible = SpeedGraph.Visible
+
+		if not SpeedGraph.Visible then
+			table.clear(SpeedGraph.SpeedHistory)
+
+			SpeedGraph.Scale = SpeedGraph.MinScale
+			VelocityLabel.Text = "Velocity: 0.0"
+
+			HideLines()
+		end
+	end
+
+	--// Rebuilds the pool, otherwise a raised max history has nowhere to draw the extra
+	--// segments and the graph stops growing past its old length
+	function SpeedGraph:SetMaxHistory(Value)
+		SpeedGraph.MaxHistory = math.max(2, Value or 150)
+
+		while #SpeedGraph.SpeedHistory > SpeedGraph.MaxHistory do
+			table.remove(SpeedGraph.SpeedHistory, 1)
+		end
+
+		BuildPool()
+		Redraw()
+	end
+
+	--// Only used while auto scale is off, so setting one does not quietly undo the other
+	function SpeedGraph:SetMaxSpeed(Value)
+		SpeedGraph.MaxSpeed = math.max(1, Value or 200)
+
+		Redraw()
+	end
+
+	function SpeedGraph:SetAutoScale(Bool)
+		SpeedGraph.AutoScale = not not Bool
+
+		Redraw()
+	end
+
+	function SpeedGraph:SetInterval(Value)
+		SpeedGraph.Interval = math.max(0, Value or 0.05)
+	end
+
+	function SpeedGraph:Destroy()
+		for Idx = #Library.SpeedGraphInstances, 1, -1 do
+			if Library.SpeedGraphInstances[Idx] == SpeedGraph then
+				table.remove(Library.SpeedGraphInstances, Idx)
+			end
+		end
+
+		GraphOuter:Destroy()
+	end
+
+	GraphContent:GetPropertyChangedSignal("AbsoluteSize"):Connect(Redraw)
+
+	Library:GiveSignal(RenderStepped:Connect(function(Delta)
+		if not GraphOuter.Visible then
+			return
+		end
+
+		SpeedGraph:UpdateSpeed(Delta)
+	end))
+
+	Library:MakeDraggable(GraphOuter, 25)
+
+	BuildPool()
+
+	SpeedGraph.Frame = GraphOuter
+
+	table.insert(Library.SpeedGraphInstances, SpeedGraph)
+
+	return SpeedGraph
+end
 
 getgenv().Library = Library
 return Library
