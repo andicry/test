@@ -3035,12 +3035,12 @@ do
 
 		local PointCount = math.max(2, Info.Points or 9)
 		local Divisions = PointCount - 1
-		local PixelsPerSegment = Info.Smoothness or 20
+		local Thickness = math.max(1, Info.Thickness or 1)
 
 		local Curve = {
 			Value = {},
 			Points = {},
-			Pixels = {},
+			Lines = {},
 			PointCount = PointCount,
 			Height = Info.Height or 150,
 			Type = "Curve",
@@ -3136,23 +3136,29 @@ do
 			})
 		end
 
-		--// The line is a fixed pool of squares laid along the segments, so a drag only moves
-		--// what already exists instead of building and throwing away frames every step.
-		for i = 1, Divisions * PixelsPerSegment do
-			local Pixel = Library:Create("Frame", {
+		--[[
+			One thin frame per segment, rotated to the angle between its two points, which is the
+			same way an FOV circle is drawn. It reads as a single continuous stroke instead of a
+			run of dots, and consecutive segments share an endpoint so the joints close up.
+
+			The pool is fixed, so a drag only ever moves and re-rotates what already exists.
+		]]
+		for i = 1, Divisions do
+			local Line = Library:Create("Frame", {
 				BackgroundColor3 = Library.AccentColor,
 				BorderSizePixel = 0,
 				AnchorPoint = Vector2.new(0.5, 0.5),
-				Size = UDim2.fromOffset(3, 3),
+				Size = UDim2.fromOffset(1, Thickness),
+				Visible = false,
 				ZIndex = 8,
 				Parent = Canvas,
 			})
 
-			Library:AddToRegistry(Pixel, {
+			Library:AddToRegistry(Line, {
 				BackgroundColor3 = "AccentColor",
 			})
 
-			table.insert(Curve.Pixels, Pixel)
+			Curve.Lines[i] = Line
 		end
 
 		for i = 1, PointCount do
@@ -3197,27 +3203,29 @@ do
 		end
 
 		function Curve:Redraw()
-			local Index = 1
+			local Size = Canvas.AbsoluteSize
+
+			--// A rotated frame has to be sized in pixels, so there is nothing to lay out until
+			--// the canvas has a real size. On a tab that has not been opened yet it is still
+			--// zero, which is what the AbsoluteSize signal further down is for.
+			if Size.X <= 0 or Size.Y <= 0 then
+				return
+			end
 
 			for i = 1, Divisions do
 				local From = Curve.Points[i]
 				local To = Curve.Points[i + 1]
+				local Line = Curve.Lines[i]
 
-				for j = 0, PixelsPerSegment - 1 do
-					local Alpha = j / PixelsPerSegment
-					local Pixel = Curve.Pixels[Index]
+				local X1, Y1 = From.X * Size.X, From.Y * Size.Y
+				local X2, Y2 = To.X * Size.X, To.Y * Size.Y
+				local dX, dY = X2 - X1, Y2 - Y1
+				local Length = math.sqrt(dX * dX + dY * dY)
 
-					if Pixel then
-						Pixel.Position = UDim2.new(
-							From.X + (To.X - From.X) * Alpha,
-							0,
-							From.Y + (To.Y - From.Y) * Alpha,
-							0
-						)
-					end
-
-					Index = Index + 1
-				end
+				Line.Position = UDim2.fromOffset(math.floor((X1 + X2) * 0.5 + 0.5), math.floor((Y1 + Y2) * 0.5 + 0.5))
+				Line.Size = UDim2.fromOffset(math.max(1, math.ceil(Length)), Thickness)
+				Line.Rotation = math.deg(math.atan2(dY, dX))
+				Line.Visible = true
 			end
 		end
 
@@ -3321,6 +3329,10 @@ do
 			end, function()
 				Library:AttemptSave()
 			end)
+		end)
+
+		Canvas:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
+			Curve:Redraw()
 		end)
 
 		Curve:Redraw()
