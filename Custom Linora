@@ -1,23 +1,50 @@
 --// best linora version cmon now 
 
-writefile(
-	"Tahoma.ttf",
-	game:HttpGet("https://github.com/sametexe001/luas/raw/refs/heads/main/fonts/windows-xp-tahoma.ttf")
-)
+--[[
+	The font is cached on disk now. It was pulled off the network on every single run, and that
+	download is what the load delay was: it is fetched once and then left alone, so every run
+	after the first is entirely local. Everything here is wrapped, so a dead network costs you
+	the custom font and nothing else instead of stopping the library dead.
 
-writefile("Tahoma.font", game:GetService("HttpService"):JSONEncode({
-	name = "Tahoma",
-	faces = {
-		{
-			name = "Regular",
-			weight = 400,
-			style = "normal",
-			assetId = getcustomasset("Tahoma.ttf"),
+	The Scrollbar.png fetch that used to sit here is gone with it. Every scrolling frame in the
+	library runs at ScrollBarThickness 0, so nothing was ever drawing that image.
+]]
+if not (isfile and isfile("Tahoma.ttf")) then
+	pcall(function()
+		writefile("Tahoma.ttf", game:HttpGet("https://github.com/sametexe001/luas/raw/refs/heads/main/fonts/windows-xp-tahoma.ttf"))
+	end)
+end
+
+--[[
+	The json is rewritten every run even though the ttf is not, because getcustomasset hands back
+	a fresh content id each session and a stale one sitting in the file draws nothing at all.
+]]
+pcall(function()
+	writefile("Tahoma.font", game:GetService("HttpService"):JSONEncode({
+		name = "Tahoma",
+		faces = {
+			{
+				name = "Regular",
+				weight = 400,
+				style = "normal",
+				assetId = getcustomasset("Tahoma.ttf"),
+			},
 		},
-	},
-}))
+	}))
+end)
 
-writefile("Scrollbar.png", game:HttpGet("https://github.com/sametexe001/images/blob/main/scrollbar.png?raw=true"))
+--// Tahoma when it resolved, a built in face when it did not, so the ui always has something to draw with
+local ResolvedFontFace = Font.fromEnum(Enum.Font.Code)
+
+do
+	local Ok, Face = pcall(function()
+		return Font.new(getcustomasset("Tahoma.font"), Enum.FontWeight.Regular)
+	end)
+
+	if Ok and Face then
+		ResolvedFontFace = Face
+	end
+end
 
 local InputService = game:GetService("UserInputService")
 local TextService = game:GetService("TextService")
@@ -75,7 +102,7 @@ local Library = {
 	RiskColor = Color3.fromRGB(200, 50, 50),
 
 	Black = Color3.new(0, 0, 0),
-	FontFace = Font.new(getcustomasset("Tahoma.font"), Enum.FontWeight.Regular),
+	FontFace = ResolvedFontFace,
 	Font = Enum.Font.Code, --// For text bounds size n shit
 
 	AllowRiskyFeatures = false,
@@ -4924,7 +4951,6 @@ do
 		BorderSizePixel = 0,
 		Position = UDim2.new(0, 1, 0, 1),
 		Size = UDim2.new(1, -2, 1, -2),
-		BorderSizePixel = 0,
 		ZIndex = 102,
 		Parent = KeybindInner,
 	})
@@ -5454,8 +5480,11 @@ function Library:CreateWindow(...)
 
 	Library:MakeDraggable(Outer, 25)
 
+	--// 24 of bleed keeps the falloff crossing the window edge. The slice border bands always draw
+	--// at their natural 21px whatever the frame size, so a bigger bleed pushes the whole gradient
+	--// clear of the frame and the glow reads as a separate rectangle floating around the window.
 	local Glow = Library:CreateGlow(Outer, {
-		Size = 48,
+		Size = 24,
 		ZIndex = 0,
 	})
 
@@ -5625,9 +5654,15 @@ function Library:CreateWindow(...)
 
 		local TabButtonWidth = Library:GetTextBounds(Name, Library.FontFace, 16)
 
+		--[[
+			No border on a tab. The outline grey was drawing a ring around every single tab, so a
+			row of them read as a row of separate boxes instead of one connected strip. The tab you
+			are on is still obvious without it, because it fills with MainColor and gets the accent
+			line across the top.
+		]]
 		local TabButton = Library:Create("Frame", {
 			BackgroundColor3 = Library.BackgroundColor,
-			BorderColor3 = Library.OutlineColor,
+			BorderSizePixel = 0,
 			Size = UDim2.new(0, TabButtonWidth + 8 + 4, 1, 0),
 			ZIndex = 1,
 			Parent = TabArea,
@@ -5652,7 +5687,6 @@ function Library:CreateWindow(...)
 
 		Library:AddToRegistry(TabButton, {
 			BackgroundColor3 = "BackgroundColor",
-			BorderColor3 = "OutlineColor",
 		})
 
 		local TabButtonLabel = Library:CreateLabel({
@@ -5972,9 +6006,6 @@ function Library:CreateWindow(...)
 				ScrollBarThickness = 0,
 				ScrollBarImageColor3 = Library.AccentColor,
 				ScrollingDirection = Enum.ScrollingDirection.Y,
-				MidImage = getcustomasset("Scrollbar.png"),
-                TopImage = getcustomasset("Scrollbar.png"),
-                BottomImage = getcustomasset("Scrollbar.png"),
 				BorderSizePixel = 0,
 				ZIndex = 5,
 				Parent = BoxInner,
