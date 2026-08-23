@@ -111,6 +111,24 @@ local Library = {
 	OpenedFrames = {},
 	DependencyBoxes = {},
 
+	--[[
+		Touch support. IsMobile is resolved once at load and every mobile branch reads it, so a
+		desktop session never pays for any of this.
+
+		CanDrag is the arbitration flag. A finger has no separate buttons, so the same drag that
+		moves a slider or scrolls a side would also drag the window. Every control that owns a
+		drag clears CanDrag while it is active and restores it when it lets go, which leaves the
+		window draggable everywhere except on top of a control that is mid-gesture.
+
+		CantDragForced is the user facing version of the same idea, held by the on screen Lock
+		button, and it outranks CanDrag so a locked window stays put no matter what is touched.
+	]]
+	IsMobile = false,
+	DevicePlatform = Enum.Platform.None,
+
+	CanDrag = true,
+	CantDragForced = false,
+
 	Signals = {},
 	ScreenGui = ScreenGui,
 
@@ -124,6 +142,22 @@ local Library = {
 	Options = Options,
 	Toggles = Toggles,
 }
+
+--[[
+	Studio reports a desktop platform even with the touch emulator on, so the two cases are asked
+	different questions. In Studio the emulator flips TouchEnabled on and MouseEnabled off, which is
+	the only honest signal there. Live, the platform enum is the real answer, and it is read inside a
+	pcall because GetPlatform is not guaranteed to exist on every executor.
+]]
+if RunService:IsStudio() then
+	Library.IsMobile = InputService.TouchEnabled and not InputService.MouseEnabled
+else
+	pcall(function()
+		Library.DevicePlatform = InputService:GetPlatform()
+	end)
+
+	Library.IsMobile = (Library.DevicePlatform == Enum.Platform.Android or Library.DevicePlatform == Enum.Platform.IOS)
+end
 
 local RainbowStep = 0
 local Hue = 0
@@ -432,7 +466,15 @@ function Library:CreateLabel(Properties, IsHud)
 	return Library:Create(_Instance, Properties)
 end
 
-function Library:MakeDraggable(Instance, Cutoff)
+--[[
+	IsMainWindow opts a frame into the two arbitration flags. Only the main window passes it, so the
+	watermark, the keybind list and the speed graph stay draggable no matter what else is going on,
+	which is the behaviour a HUD element wants.
+
+	CantDragForced is the Lock button and always wins. CanDrag is the softer one, cleared by whatever
+	control currently owns a gesture, and it is only consulted while the window is actually on screen.
+]]
+function Library:MakeDraggable(Instance, Cutoff, IsMainWindow)
 	Instance.Active = true
 
 	-- Dragging the real frame re-lays out every descendant each frame, which is what
@@ -457,6 +499,16 @@ function Library:MakeDraggable(Instance, Cutoff)
 
 	Instance.InputBegan:Connect(function(Input)
 		if Library:IsPrimaryInput(Input) then
+			if IsMainWindow then
+				if Library.CantDragForced then
+					return
+				end
+
+				if not Library.CanDrag and Instance.Visible then
+					return
+				end
+			end
+
 			local StartX, StartY = Library:GetInputPosition(Input)
 			local ObjPos = Vector2.new(StartX - Instance.AbsolutePosition.X, StartY - Instance.AbsolutePosition.Y)
 
@@ -568,29 +620,40 @@ function Library:OnHighlight(HighlightInstance, Instance, Properties, Properties
 	end)
 end
 
-function Library:MouseIsOverOpenedFrame()
+--[[
+	Pointer hit tests, in the same space as AbsolutePosition.
+
+	Mouse stops being a truthful position the moment a session is driven by a finger, so both of
+	these take the InputObject that triggered the check and read the position off that instead.
+	The argument is optional and falls back to the cursor, which keeps the handful of mouse only
+	callers such as the hover tooltip working unchanged.
+]]
+function Library:MouseIsOverOpenedFrame(Input)
+	local PointerX, PointerY = Library:GetInputPosition(Input)
+
 	for Frame, _ in next, Library.OpenedFrames do
 		local AbsPos, AbsSize = Frame.AbsolutePosition, Frame.AbsoluteSize
 
 		if
-			Mouse.X >= AbsPos.X
-			and Mouse.X <= AbsPos.X + AbsSize.X
-			and Mouse.Y >= AbsPos.Y
-			and Mouse.Y <= AbsPos.Y + AbsSize.Y
+			PointerX >= AbsPos.X
+			and PointerX <= AbsPos.X + AbsSize.X
+			and PointerY >= AbsPos.Y
+			and PointerY <= AbsPos.Y + AbsSize.Y
 		then
 			return true
 		end
 	end
 end
 
-function Library:IsMouseOverFrame(Frame)
+function Library:IsMouseOverFrame(Frame, Input)
+	local PointerX, PointerY = Library:GetInputPosition(Input)
 	local AbsPos, AbsSize = Frame.AbsolutePosition, Frame.AbsoluteSize
 
 	if
-		Mouse.X >= AbsPos.X
-		and Mouse.X <= AbsPos.X + AbsSize.X
-		and Mouse.Y >= AbsPos.Y
-		and Mouse.Y <= AbsPos.Y + AbsSize.Y
+		PointerX >= AbsPos.X
+		and PointerX <= AbsPos.X + AbsSize.X
+		and PointerY >= AbsPos.Y
+		and PointerY <= AbsPos.Y + AbsSize.Y
 	then
 		return true
 	end
@@ -1074,12 +1137,25 @@ do
 				BorderColor3 = "OutlineColor",
 			})
 
+			--[[
+				Everything that opens a floating panel parks the window drag while it is up, and hands
+				it back on the way out. Touch only, since a mouse aims with a cursor and never has the
+				two gestures land on the same press.
+			]]
 			function ContextMenu:Show()
 				self.Container.Visible = true
+
+				if Library.IsMobile then
+					Library.CanDrag = false
+				end
 			end
 
 			function ContextMenu:Hide()
 				self.Container.Visible = false
+
+				if Library.IsMobile then
+					Library.CanDrag = true
+				end
 			end
 
 			function ContextMenu:AddOption(Str, Callback)
@@ -1100,7 +1176,7 @@ do
 				Library:OnHighlight(Button, Button, { TextColor3 = "AccentColor" }, { TextColor3 = "FontColor" })
 
 				Button.InputBegan:Connect(function(Input)
-					if Input.UserInputType ~= Enum.UserInputType.MouseButton1 then
+					if not Library:IsPrimaryInput(Input) then
 						return
 					end
 
@@ -1225,11 +1301,19 @@ do
 
 			PickerFrameOuter.Visible = true
 			Library.OpenedFrames[PickerFrameOuter] = true
+
+			if Library.IsMobile then
+				Library.CanDrag = false
+			end
 		end
 
 		function ColorPicker:Hide()
 			PickerFrameOuter.Visible = false
 			Library.OpenedFrames[PickerFrameOuter] = nil
+
+			if Library.IsMobile then
+				Library.CanDrag = true
+			end
 		end
 
 		function ColorPicker:SetValue(HSV, Transparency)
@@ -1282,18 +1366,68 @@ do
 		end)
 
 		DisplayFrame.InputBegan:Connect(function(Input)
-			if Input.UserInputType == Enum.UserInputType.MouseButton1 and not Library:MouseIsOverOpenedFrame() then
+			if Library:IsPrimaryInput(Input) and not Library:MouseIsOverOpenedFrame(Input) then
 				if PickerFrameOuter.Visible then
 					ColorPicker:Hide()
 				else
 					ContextMenu:Hide()
 					ColorPicker:Show()
 				end
-			elseif Input.UserInputType == Enum.UserInputType.MouseButton2 and not Library:MouseIsOverOpenedFrame() then
+			elseif
+				Input.UserInputType == Enum.UserInputType.MouseButton2
+				and not Library:MouseIsOverOpenedFrame(Input)
+			then
 				ContextMenu:Show()
 				ColorPicker:Hide()
 			end
 		end)
+
+		--[[
+			Copy and paste colour is right click only, so on touch a press that stays put for a third
+			of a second reaches it instead. The tap above has already opened the picker by the time the
+			hold completes, so the picker is closed again first and the menu takes its place, which is
+			the same end state a right click lands on.
+		]]
+		if Library.IsMobile then
+			DisplayFrame.InputBegan:Connect(function(Input)
+				if Input.UserInputType ~= Enum.UserInputType.Touch then
+					return
+				end
+
+				local StartX, StartY = Library:GetInputPosition(Input)
+				local Held = true
+
+				local Ended
+				Ended = Input:GetPropertyChangedSignal("UserInputState"):Connect(function()
+					if
+						Input.UserInputState == Enum.UserInputState.End
+						or Input.UserInputState == Enum.UserInputState.Cancel
+					then
+						Held = false
+						Ended:Disconnect()
+					end
+				end)
+
+				task.delay(0.3, function()
+					if Ended.Connected then
+						Ended:Disconnect()
+					end
+
+					if not Held then
+						return
+					end
+
+					local NowX, NowY = Library:GetInputPosition(Input)
+
+					if math.abs(NowX - StartX) > 6 or math.abs(NowY - StartY) > 6 then
+						return
+					end
+
+					ColorPicker:Hide()
+					ContextMenu:Show()
+				end)
+			end)
+		end
 
 		if TransparencyBoxInner then
 			TransparencyBoxInner.InputBegan:Connect(function(Input)
@@ -1314,26 +1448,28 @@ do
 		end
 
 		Library:GiveSignal(InputService.InputBegan:Connect(function(Input)
-			if Input.UserInputType == Enum.UserInputType.MouseButton1 then
+			if Library:IsPrimaryInput(Input) then
 				local AbsPos, AbsSize = PickerFrameOuter.AbsolutePosition, PickerFrameOuter.AbsoluteSize
+				local PointerX, PointerY = Library:GetInputPosition(Input)
 
 				if
-					Mouse.X < AbsPos.X
-					or Mouse.X > AbsPos.X + AbsSize.X
-					or Mouse.Y < (AbsPos.Y - 20 - 1)
-					or Mouse.Y > AbsPos.Y + AbsSize.Y
+					PointerX < AbsPos.X
+					or PointerX > AbsPos.X + AbsSize.X
+					or PointerY < (AbsPos.Y - 20 - 1)
+					or PointerY > AbsPos.Y + AbsSize.Y
 				then
 					ColorPicker:Hide()
 				end
 
-				if not Library:IsMouseOverFrame(ContextMenu.Container) then
+				if not Library:IsMouseOverFrame(ContextMenu.Container, Input) then
 					ContextMenu:Hide()
 				end
 			end
 
 			if Input.UserInputType == Enum.UserInputType.MouseButton2 and ContextMenu.Container.Visible then
 				if
-					not Library:IsMouseOverFrame(ContextMenu.Container) and not Library:IsMouseOverFrame(DisplayFrame)
+					not Library:IsMouseOverFrame(ContextMenu.Container, Input)
+					and not Library:IsMouseOverFrame(DisplayFrame, Input)
 				then
 					ContextMenu:Hide()
 				end
@@ -1486,7 +1622,7 @@ do
 			end
 
 			Label.InputBegan:Connect(function(Input)
-				if Input.UserInputType == Enum.UserInputType.MouseButton1 then
+				if Library:IsPrimaryInput(Input) then
 					ModeButton:Select()
 					Library:AttemptSave()
 				end
@@ -1596,7 +1732,7 @@ do
 		local Picking = false
 
 		PickOuter.InputBegan:Connect(function(Input)
-			if Input.UserInputType == Enum.UserInputType.MouseButton1 and not Library:MouseIsOverOpenedFrame() then
+			if Library:IsPrimaryInput(Input) and not Library:MouseIsOverOpenedFrame(Input) then
 				Picking = true
 
 				DisplayLabel.Text = ""
@@ -1644,10 +1780,63 @@ do
 
 					Event:Disconnect()
 				end)
-			elseif Input.UserInputType == Enum.UserInputType.MouseButton2 and not Library:MouseIsOverOpenedFrame() then
+			elseif
+				Input.UserInputType == Enum.UserInputType.MouseButton2
+				and not Library:MouseIsOverOpenedFrame(Input)
+			then
 				ModeSelectOuter.Visible = true
 			end
 		end)
+
+		--[[
+			The mode menu is right click only, and a finger has no second button. On touch a press
+			that stays put for a third of a second opens it instead, which is the gesture the
+			platform already uses for a context menu, and the press is abandoned the moment it
+			moves so it never fights a drag or steals an ordinary tap.
+		]]
+		if Library.IsMobile then
+			PickOuter.InputBegan:Connect(function(Input)
+				if Input.UserInputType ~= Enum.UserInputType.Touch then
+					return
+				end
+
+				if Library:MouseIsOverOpenedFrame(Input) then
+					return
+				end
+
+				local StartX, StartY = Library:GetInputPosition(Input)
+				local Held = true
+
+				local Ended
+				Ended = Input:GetPropertyChangedSignal("UserInputState"):Connect(function()
+					if
+						Input.UserInputState == Enum.UserInputState.End
+						or Input.UserInputState == Enum.UserInputState.Cancel
+					then
+						Held = false
+						Ended:Disconnect()
+					end
+				end)
+
+				task.delay(0.3, function()
+					if Ended.Connected then
+						Ended:Disconnect()
+					end
+
+					if not Held or Picking then
+						return
+					end
+
+					local NowX, NowY = Library:GetInputPosition(Input)
+
+					if math.abs(NowX - StartX) > 6 or math.abs(NowY - StartY) > 6 then
+						return
+					end
+
+					ModeSelectOuter.Visible = true
+				end)
+			end)
+		end
 
 		Library:GiveSignal(InputService.InputBegan:Connect(function(Input)
 			if not Picking then
@@ -1673,14 +1862,15 @@ do
 				KeyPicker:Update()
 			end
 
-			if Input.UserInputType == Enum.UserInputType.MouseButton1 then
+			if Library:IsPrimaryInput(Input) then
 				local AbsPos, AbsSize = ModeSelectOuter.AbsolutePosition, ModeSelectOuter.AbsoluteSize
+				local PointerX, PointerY = Library:GetInputPosition(Input)
 
 				if
-					Mouse.X < AbsPos.X
-					or Mouse.X > AbsPos.X + AbsSize.X
-					or Mouse.Y < (AbsPos.Y - 20 - 1)
-					or Mouse.Y > AbsPos.Y + AbsSize.Y
+					PointerX < AbsPos.X
+					or PointerX > AbsPos.X + AbsSize.X
+					or PointerY < (AbsPos.Y - 20 - 1)
+					or PointerY > AbsPos.Y + AbsSize.Y
 				then
 					ModeSelectOuter.Visible = false
 				end
@@ -1881,11 +2071,11 @@ do
 			end
 
 			local function ValidateClick(Input)
-				if Library:MouseIsOverOpenedFrame() then
+				if Library:MouseIsOverOpenedFrame(Input) then
 					return false
 				end
 
-				if Input.UserInputType ~= Enum.UserInputType.MouseButton1 then
+				if not Library:IsPrimaryInput(Input) then
 					return false
 				end
 
@@ -2508,7 +2698,7 @@ do
 						return
 					end
 
-					if Input.UserInputType ~= Enum.UserInputType.MouseButton1 then
+					if not Library:IsPrimaryInput(Input) then
 						return
 					end
 
@@ -2755,7 +2945,7 @@ do
 		end
 
 		ToggleRegion.InputBegan:Connect(function(Input)
-			if Input.UserInputType == Enum.UserInputType.MouseButton1 and not Library:MouseIsOverOpenedFrame() then
+			if Library:IsPrimaryInput(Input) and not Library:MouseIsOverOpenedFrame(Input) then
 				if not Toggle.Risky then
 					Toggle:SetValue(not Toggle.Value) -- Why was it not like this from the start?
 					Library:AttemptSave()
@@ -3010,7 +3200,7 @@ do
 		end
 
 		SliderInner.InputBegan:Connect(function(Input)
-			if Library:IsPrimaryInput(Input) and not Library:MouseIsOverOpenedFrame() then
+			if Library:IsPrimaryInput(Input) and not Library:MouseIsOverOpenedFrame(Input) then
 				Library:BindDrag(Input, function(PointerX)
 					Slider:RefreshMaxSize()
 
@@ -3303,7 +3493,7 @@ do
 			pulls each column to the cursor in turn.
 		]]
 		Canvas.InputBegan:Connect(function(Input)
-			if not Library:IsPrimaryInput(Input) or Library:MouseIsOverOpenedFrame() then
+			if not Library:IsPrimaryInput(Input) or Library:MouseIsOverOpenedFrame(Input) then
 				return
 			end
 
@@ -3784,7 +3974,7 @@ do
 				end)
 
 				ButtonLabel.InputBegan:Connect(function(Input)
-					if Input.UserInputType == Enum.UserInputType.MouseButton1 then
+					if Library:IsPrimaryInput(Input) then
 						local Try = not Selected
 
 						if Dropdown:GetActiveValues() == 1 and not Try and not Info.AllowNull then
@@ -3846,12 +4036,20 @@ do
 			ListOuter.Visible = true
 			Library.OpenedFrames[ListOuter] = true
 			DropdownArrow.Rotation = 180
+
+			if Library.IsMobile then
+				Library.CanDrag = false
+			end
 		end
 
 		function Dropdown:CloseDropdown()
 			ListOuter.Visible = false
 			Library.OpenedFrames[ListOuter] = nil
 			DropdownArrow.Rotation = 0
+
+			if Library.IsMobile then
+				Library.CanDrag = true
+			end
 		end
 
 		function Dropdown:OnChanged(Func)
@@ -3885,7 +4083,7 @@ do
 		end
 
 		DropdownOuter.InputBegan:Connect(function(Input)
-			if Input.UserInputType == Enum.UserInputType.MouseButton1 and not Library:MouseIsOverOpenedFrame() then
+			if Library:IsPrimaryInput(Input) and not Library:MouseIsOverOpenedFrame(Input) then
 				if ListOuter.Visible then
 					Dropdown:CloseDropdown()
 				else
@@ -3895,14 +4093,15 @@ do
 		end)
 
 		InputService.InputBegan:Connect(function(Input)
-			if Input.UserInputType == Enum.UserInputType.MouseButton1 then
+			if Library:IsPrimaryInput(Input) then
 				local AbsPos, AbsSize = ListOuter.AbsolutePosition, ListOuter.AbsoluteSize
+				local PointerX, PointerY = Library:GetInputPosition(Input)
 
 				if
-					Mouse.X < AbsPos.X
-					or Mouse.X > AbsPos.X + AbsSize.X
-					or Mouse.Y < (AbsPos.Y - 20 - 1)
-					or Mouse.Y > AbsPos.Y + AbsSize.Y
+					PointerX < AbsPos.X
+					or PointerX > AbsPos.X + AbsSize.X
+					or PointerY < (AbsPos.Y - 20 - 1)
+					or PointerY > AbsPos.Y + AbsSize.Y
 				then
 					Dropdown:CloseDropdown()
 				end
@@ -4423,7 +4622,7 @@ do
 				end)
 
 				ButtonLabel.InputBegan:Connect(function(Input)
-					if Input.UserInputType == Enum.UserInputType.MouseButton1 then
+					if Library:IsPrimaryInput(Input) then
 						ToggleValue(Value)
 					end
 				end)
@@ -4466,8 +4665,15 @@ do
 			Library.OpenedFrames[ListOuter] = true
 			DropdownArrow.Rotation = 180
 
-			--// Straight into typing, no second click on the search box first
-			if Info.AutoFocus ~= false then
+			if Library.IsMobile then
+				Library.CanDrag = false
+			end
+
+			--[[
+				Straight into typing, no second click on the search box first. Not on mobile though,
+				where the on screen keyboard would cover the list the search is meant to be filtering.
+			]]
+			if Info.AutoFocus ~= false and not Library.IsMobile then
 				SearchBox:CaptureFocus()
 			end
 		end
@@ -4476,6 +4682,10 @@ do
 			ListOuter.Visible = false
 			Library.OpenedFrames[ListOuter] = nil
 			DropdownArrow.Rotation = 0
+
+			if Library.IsMobile then
+				Library.CanDrag = true
+			end
 
 			SearchBox:ReleaseFocus()
 
@@ -4533,7 +4743,7 @@ do
 		end)
 
 		DropdownOuter.InputBegan:Connect(function(Input)
-			if Input.UserInputType == Enum.UserInputType.MouseButton1 and not Library:MouseIsOverOpenedFrame() then
+			if Library:IsPrimaryInput(Input) and not Library:MouseIsOverOpenedFrame(Input) then
 				if ListOuter.Visible then
 					Dropdown:CloseDropdown()
 				else
@@ -4543,14 +4753,15 @@ do
 		end)
 
 		InputService.InputBegan:Connect(function(Input)
-			if Input.UserInputType == Enum.UserInputType.MouseButton1 and ListOuter.Visible then
+			if Library:IsPrimaryInput(Input) and ListOuter.Visible then
 				local AbsPos, AbsSize = ListOuter.AbsolutePosition, ListOuter.AbsoluteSize
+				local PointerX, PointerY = Library:GetInputPosition(Input)
 
 				if
-					Mouse.X < AbsPos.X
-					or Mouse.X > AbsPos.X + AbsSize.X
-					or Mouse.Y < (AbsPos.Y - 20 - 1)
-					or Mouse.Y > AbsPos.Y + AbsSize.Y
+					PointerX < AbsPos.X
+					or PointerX > AbsPos.X + AbsSize.X
+					or PointerY < (AbsPos.Y - 20 - 1)
+					or PointerY > AbsPos.Y + AbsSize.Y
 				then
 					Dropdown:CloseDropdown()
 				end
@@ -5615,8 +5826,24 @@ function Library:CreateWindow(...)
 	if typeof(Config.Position) ~= "UDim2" then
 		Config.Position = UDim2.fromOffset(175, 50)
 	end
+	local MobileAutoHeight = false
+
 	if typeof(Config.Size) ~= "UDim2" then
-		Config.Size = UDim2.fromOffset(550, 600)
+		--[[
+			600 of height is taller than a phone screen, so the desktop default would run the window
+			off the bottom with no way to reach the lower tabs. On mobile the height follows the
+			viewport instead and keeps a little room at the edges, and the camera is read defensively
+			because it can still be nil in the first frames of a join.
+		]]
+		if Library.IsMobile then
+			local Camera = workspace.CurrentCamera
+			local ViewportY = Camera and Camera.ViewportSize.Y or 600
+
+			Config.Size = UDim2.fromOffset(550, math.clamp(ViewportY - 35, 200, 600))
+			MobileAutoHeight = true
+		else
+			Config.Size = UDim2.fromOffset(550, 600)
+		end
 	end
 
 	if Config.Center then
@@ -5639,7 +5866,26 @@ function Library:CreateWindow(...)
 		Parent = ScreenGui,
 	})
 
-	Library:MakeDraggable(Outer, 25)
+	Library:MakeDraggable(Outer, 25, true)
+
+	--[[
+		Rotating a phone swaps the viewport dimensions, so a window sized for portrait would hang off
+		the bottom in landscape with the lower tabs out of reach. Only the height this library picked
+		itself follows the viewport, so a script that asked for an explicit size still gets it, and
+		only the height moves because the two columns are scaled and reflow on their own.
+	]]
+	if Library.IsMobile and MobileAutoHeight then
+		local Camera = workspace.CurrentCamera
+
+		if Camera then
+			Library:GiveSignal(Camera:GetPropertyChangedSignal("ViewportSize"):Connect(function()
+				Config.Size =
+					UDim2.fromOffset(Config.Size.X.Offset, math.clamp(Camera.ViewportSize.Y - 35, 200, 600))
+
+				Outer.Size = Config.Size
+			end))
+		end
+	end
 
 	--// 24 of bleed keeps the falloff crossing the window edge. The slice border bands always draw
 	--// at their natural 21px whatever the frame size, so a bigger bleed pushes the whole gradient
@@ -6442,9 +6688,7 @@ function Library:CreateWindow(...)
 				end
 
 				Button.InputBegan:Connect(function(Input)
-					if
-						Input.UserInputType == Enum.UserInputType.MouseButton1 and not Library:MouseIsOverOpenedFrame()
-					then
+					if Library:IsPrimaryInput(Input) and not Library:MouseIsOverOpenedFrame(Input) then
 						Tab:Show()
 						Tab:Resize()
 					end
@@ -6480,7 +6724,7 @@ function Library:CreateWindow(...)
 		end
 
 		TabButton.InputBegan:Connect(function(Input)
-			if Input.UserInputType == Enum.UserInputType.MouseButton1 then
+			if Library:IsPrimaryInput(Input) then
 				Tab:ShowTab()
 			end
 		end)
@@ -6551,7 +6795,12 @@ function Library:CreateWindow(...)
 			BlurTween:Play()
 
 			task.spawn(function()
-				-- TODO: add cursor fade?
+				--// A finger has no cursor to replace, so drawing one would pin a triangle to a
+				--// meaningless point and hide the touch controls behind MouseIconEnabled
+				if Library.IsMobile then
+					return
+				end
+
 				local State = InputService.MouseIconEnabled
 
 				local Cursor = Drawing.new("Triangle")
@@ -6626,6 +6875,134 @@ function Library:CreateWindow(...)
 			task.spawn(Library.Toggle)
 		end
 	end))
+
+	--[[
+		Mobile only widgets.
+
+		The menu keybind is unreachable without a keyboard, so a phone needs a visible way in, and the
+		same goes for pinning the window down once it is where it should be. Both panels are draggable
+		so they can be parked out of the way, and a press only counts as a tap when it stays put,
+		which is what stops a reposition from also firing the button underneath it.
+	]]
+	if Library.IsMobile then
+		local function CreateMobileWidget(Text, PositionY, Callback)
+			local Holder = Library:Create("Frame", {
+				BorderColor3 = Color3.new(0, 0, 0),
+				Position = UDim2.new(0.008, 0, PositionY, 0),
+				Size = UDim2.new(0, 82, 0, 30),
+				ZIndex = 200,
+				Parent = ScreenGui,
+			})
+
+			Library:CreateGlow(Holder, {
+				Size = 24,
+				ZIndex = 199,
+			})
+
+			local Border = Library:Create("Frame", {
+				BackgroundColor3 = Library.MainColor,
+				BorderSizePixel = 0,
+				Size = UDim2.new(1, 0, 1, 0),
+				ZIndex = 201,
+				Parent = Holder,
+			})
+
+			Library:AddToRegistry(Border, {
+				BackgroundColor3 = "MainColor",
+			})
+
+			local Body = Library:Create("Frame", {
+				BackgroundColor3 = Color3.new(1, 1, 1),
+				BorderSizePixel = 0,
+				Position = UDim2.new(0, 1, 0, 1),
+				Size = UDim2.new(1, -2, 1, -2),
+				ZIndex = 202,
+				Parent = Border,
+			})
+
+			local Gradient = Library:Create("UIGradient", {
+				Color = ColorSequence.new({
+					ColorSequenceKeypoint.new(0, Library:GetDarkerColor(Library.MainColor)),
+					ColorSequenceKeypoint.new(1, Library.MainColor),
+				}),
+				Rotation = 90,
+				Parent = Body,
+			})
+
+			Library:AddToRegistry(Gradient, {
+				Color = function()
+					return ColorSequence.new({
+						ColorSequenceKeypoint.new(0, Library:GetDarkerColor(Library.MainColor)),
+						ColorSequenceKeypoint.new(1, Library.MainColor),
+					})
+				end,
+			})
+
+			local ColorLine = Library:Create("Frame", {
+				BackgroundColor3 = Library.AccentColor,
+				BorderSizePixel = 0,
+				Size = UDim2.new(1, 0, 0, 1),
+				ZIndex = 204,
+				Parent = Body,
+			})
+
+			Library:AddToRegistry(ColorLine, {
+				BackgroundColor3 = "AccentColor",
+			})
+
+			local Label = Library:CreateLabel({
+				BackgroundTransparency = 1,
+				Size = UDim2.new(1, 0, 1, 0),
+				Text = Text,
+				TextSize = 13,
+				TextXAlignment = Enum.TextXAlignment.Center,
+				ZIndex = 203,
+				Parent = Body,
+			})
+
+			--// Cutoff spans the whole widget, so it can be grabbed anywhere rather than by a strip
+			Library:MakeDraggable(Holder, 30)
+
+			Library:GiveSignal(Holder.InputBegan:Connect(function(Input)
+				if not Library:IsPrimaryInput(Input) then
+					return
+				end
+
+				local StartX, StartY = Library:GetInputPosition(Input)
+
+				local Released
+				Released = Input:GetPropertyChangedSignal("UserInputState"):Connect(function()
+					if Input.UserInputState == Enum.UserInputState.Cancel then
+						Released:Disconnect()
+						return
+					end
+
+					if Input.UserInputState ~= Enum.UserInputState.End then
+						return
+					end
+
+					Released:Disconnect()
+
+					local EndX, EndY = Library:GetInputPosition(Input)
+
+					if math.abs(EndX - StartX) <= 6 and math.abs(EndY - StartY) <= 6 then
+						Callback(Label)
+					end
+				end)
+			end))
+
+			return Label
+		end
+
+		CreateMobileWidget("Toggle UI", 0.018, function()
+			task.spawn(Library.Toggle)
+		end)
+
+		CreateMobileWidget("Lock UI", 0.075, function(Label)
+			Library.CantDragForced = not Library.CantDragForced
+			Label.Text = Library.CantDragForced and "Unlock UI" or "Lock UI"
+		end)
+	end
 
 	if Config.AutoShow then
 		task.spawn(Library.Toggle)
