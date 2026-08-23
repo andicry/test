@@ -54,6 +54,7 @@ local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local GuiService = game:GetService("GuiService")
 local TweenService = game:GetService("TweenService")
+local MarketplaceService = game:GetService("MarketplaceService")
 local RenderStepped = RunService.RenderStepped
 local LocalPlayer = Players.LocalPlayer
 local Mouse = LocalPlayer:GetMouse()
@@ -5444,9 +5445,13 @@ function Library:CreateWindow(...)
 	if type(Config.Title) ~= "string" then
 		Config.Title = "No title"
 	end
-	if type(Config.TabPadding) ~= "number" then
-		Config.TabPadding = 0
-	end
+	--[[
+		The tab row is always one connected strip, so whatever a script asks for here is dropped.
+		Plenty of scripts were written against other Linora forks and pass TabPadding = 8 out of
+		habit, and honouring that is what put the seams between the tabs. The field is still read
+		so those scripts keep loading, it just cannot pull the row apart any more.
+	]]
+	Config.TabPadding = 0
 	if type(Config.MenuFadeTime) ~= "number" then
 		Config.MenuFadeTime = 0.2
 	end
@@ -5505,14 +5510,46 @@ function Library:CreateWindow(...)
 		BorderColor3 = "AccentColor",
 	})
 
+	--// Title sits centred in the bar, game name goes on the far right in the accent colour
 	local WindowLabel = Library:CreateLabel({
-		Position = UDim2.new(0, 7, 0, 0),
-		Size = UDim2.new(0, 0, 0, 25),
+		Position = UDim2.new(0, 0, 0, 0),
+		Size = UDim2.new(1, 0, 0, 25),
 		Text = Config.Title or "",
-		TextXAlignment = Enum.TextXAlignment.Left,
+		TextXAlignment = Enum.TextXAlignment.Center,
 		ZIndex = 1,
 		Parent = Inner,
 	})
+
+	local GameNameLabel = Library:CreateLabel({
+		Position = UDim2.new(1, -7, 0, 0),
+		Size = UDim2.new(0, 0, 0, 25),
+		Text = "",
+		TextXAlignment = Enum.TextXAlignment.Right,
+		ZIndex = 1,
+		Parent = Inner,
+	})
+
+	--// CreateLabel signs every label up for FontColor, so move this one over to the accent
+	Library:RemoveFromRegistry(GameNameLabel)
+	GameNameLabel.TextColor3 = Library.AccentColor
+	Library:AddToRegistry(GameNameLabel, {
+		TextColor3 = "AccentColor",
+	})
+
+	--[[
+		GetProductInfo is an http round trip and it yields, so it runs on its own thread and the
+		label fills itself in whenever the answer lands. The window is on screen well before that
+		and never waits on it, and a lookup that fails just leaves the label empty.
+	]]
+	task.spawn(function()
+		local Ok, Info = pcall(function()
+			return MarketplaceService:GetProductInfo(game.PlaceId)
+		end)
+
+		if Ok and type(Info) == "table" and type(Info.Name) == "string" then
+			GameNameLabel.Text = Info.Name
+		end
+	end)
 
 	local MainSectionOuter = Library:Create("Frame", {
 		BackgroundColor3 = Library.BackgroundColor,
