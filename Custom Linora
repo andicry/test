@@ -461,9 +461,14 @@ function Library:BindDrag(Input, Apply, Finish)
 end
 
 function Library:CreateLabel(Properties, IsHud)
+	--[[
+		Only FontFace is set here. Font is the same property under another name, so listing both
+		in one Library:Create left the drawn face up to whichever key next happened to hand over
+		last -- Code is a wide monospace and Tahoma is not, so a box measured against FontFace
+		could end up rendering the other one and be too narrow for its own text.
+	]]
 	local _Instance = Library:Create("TextLabel", {
 		BackgroundTransparency = 1,
-		Font = Library.Font,
 		FontFace = Library.FontFace,
 		TextColor3 = Library.FontColor,
 		TextSize = 12,
@@ -687,7 +692,16 @@ function Library:GetTextBounds(Text, FontFace, Size, Resolution)
 	Params.Text = Text
 	Params.Font = FontFace -- e.g. Font.new("rbxasset://fonts/families/GothamSSm.json", Enum.FontWeight.Regular)
 	Params.Size = Size
-	Params.Width = math.huge
+
+	--[[
+		A Resolution is the box the text has to fit in, so its X is the width it wraps at. This
+		was pinned to math.huge, which measured every string as one endless line and quietly
+		threw away the width the wrapping call sites were already passing in. Zero and negative
+		widths fall back rather than wrap the text one character per line, because a label that
+		has not been laid out yet reports an AbsoluteSize of 0.
+	]]
+	local WrapWidth = Resolution and Resolution.X or math.huge
+	Params.Width = WrapWidth > 1 and WrapWidth or math.huge
 
 	local Bounds = TextService:GetTextBoundsAsync(Params)
 	return Bounds.X, Bounds.Y
@@ -1942,12 +1956,37 @@ do
 			Parent = Container,
 		})
 
-		if DoesWrap then
+		--[[
+			A wrapping label has to be as tall as its own wrapped text, and that height depends on
+			how wide the label ended up being. AbsoluteSize is still 0 until Roblox has laid the
+			container out, which for anything built at load is a frame away, so this measures now
+			and once more when the width is real -- otherwise the first pass measures against no
+			width at all, gets one endless line back and the label sits there clipped.
+		]]
+		local function FitHeight()
 			local Y = select(
 				2,
-				Library:GetTextBounds(Text, Library.FontFace, 12, Vector2.new(TextLabel.AbsoluteSize.X, math.huge))
+				Library:GetTextBounds(
+					TextLabel.Text,
+					Library.FontFace,
+					12,
+					Vector2.new(TextLabel.AbsoluteSize.X, math.huge)
+				)
 			)
 			TextLabel.Size = UDim2.new(1, -4, 0, Y)
+		end
+
+		if DoesWrap then
+			FitHeight()
+
+			task.defer(function()
+				if not TextLabel.Parent then
+					return
+				end
+
+				FitHeight()
+				Groupbox:Resize()
+			end)
 		else
 			Library:Create("UIListLayout", {
 				Padding = UDim.new(0, 4),
@@ -1965,11 +2004,7 @@ do
 			TextLabel.Text = Text
 
 			if DoesWrap then
-				local Y = select(
-					2,
-					Library:GetTextBounds(Text, Library.FontFace, 12, Vector2.new(TextLabel.AbsoluteSize.X, math.huge))
-				)
-				TextLabel.Size = UDim2.new(1, -4, 0, Y)
+				FitHeight()
 			end
 
 			Groupbox:Resize()
@@ -4915,6 +4950,9 @@ end
 
 Library.NotificationMargin = 10
 
+--// How wide the notification area is, and so the widest a notification can grow before it wraps
+Library.NotificationMaxWidth = 420
+
 --// Lets every setter below accept whatever casing/spacing the dropdown feeds it,
 --// so "Top Left", "TopLeft" and "topleft" all land on the same branch.
 local function NormaliseName(Value)
@@ -4938,7 +4976,7 @@ function Library:SetNotificationPosition(Position)
 	local Name = NormaliseName(Position)
 
 	--// Reset to the top-center defaults, then apply the differences.
-	Area.Size = UDim2.new(0, 420, 1, -80)
+	Area.Size = UDim2.new(0, Library.NotificationMaxWidth, 1, -80)
 	Layout.VerticalAlignment = Enum.VerticalAlignment.Top
 	Layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
 
@@ -4973,7 +5011,7 @@ function Library:SetNotificationPosition(Position)
 	elseif Name == "belowmiddle" or Name == "centerbelow" or Name == "belowcenter" then
 		Area.AnchorPoint = Vector2.new(0.5, 0)
 		Area.Position = UDim2.new(0.5, 0, 0.68, 0)
-		Area.Size = UDim2.new(0, 420, 0.32, -20)
+		Area.Size = UDim2.new(0, Library.NotificationMaxWidth, 0.32, -20)
 	else
 		Area.AnchorPoint = Vector2.new(0.5, 0)
 		Area.Position = UDim2.new(0.5, 0, 0, 40)
@@ -5088,7 +5126,7 @@ do
 		BackgroundTransparency = 1,
 		AnchorPoint = Vector2.new(0.5, 0),
 		Position = UDim2.new(0.5, 0, 0, 40),
-		Size = UDim2.new(0, 420, 1, -80),
+		Size = UDim2.new(0, Library.NotificationMaxWidth, 1, -80),
 		ZIndex = 100,
 		Parent = ScreenGui,
 	})
@@ -5670,8 +5708,17 @@ local function ApplyFade(Targets, Alpha)
 end
 
 function Library:Notify(Text, Time)
-	local XSize, YSize = Library:GetTextBounds(Text, Library.FontFace, 12)
+	--[[
+		The box is built around the text, so the text has to be measured at the width it will be
+		drawn at. 12 of the area's width goes on the border and the 4px of padding either side of
+		the label, and what is left is the longest a line may get before it wraps onto the next
+		one. A short message still gets a short box; a long one grows downwards instead of running
+		off the side of the screen, and either way the box is never narrower than what it holds.
+	]]
+	local MaxWidth = math.max((Library.NotificationMaxWidth or 420) - 12, 60)
+	local XSize, YSize = Library:GetTextBounds(Text, Library.FontFace, 12, Vector2.new(MaxWidth, math.huge))
 
+	XSize = math.min(XSize, MaxWidth)
 	YSize = YSize + 7
 
 	local AnimTime = Library.NotificationAnimTime or 0.35
@@ -5740,10 +5787,12 @@ function Library:Notify(Text, Time)
 		end,
 	})
 
+	--// -8 not -4, so the 4px of padding on the left is matched on the right
 	local NotifyLabel = Library:CreateLabel({
 		Position = UDim2.new(0, 4, 0, 0),
-		Size = UDim2.new(1, -4, 1, 0),
+		Size = UDim2.new(1, -8, 1, 0),
 		Text = Text,
+		TextWrapped = true,
 		TextXAlignment = Enum.TextXAlignment.Left,
 		TextSize = 12,
 		ZIndex = 103,
