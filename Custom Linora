@@ -126,6 +126,19 @@ local Library = {
 	IsMobile = false,
 	DevicePlatform = Enum.Platform.None,
 
+	--[[
+		Toggle writes this, and until now nothing declared it, so it read as nil for the whole
+		session up to the first time the menu opened. The weather gate below needs a real boolean,
+		because a nil would land on WeatherLayer.Visible and Roblox rejects that outright, and a
+		script setting the weather from a saved config does it before the menu has ever been shown.
+	]]
+	Toggled = false,
+
+	--// "Off" | "Rain" | "Snow", and a particle count rather than an emission rate
+	WeatherEffect = "Off",
+	WeatherAmount = 0,
+	WeatherParticles = {},
+
 	CanDrag = true,
 	CantDragForced = false,
 
@@ -782,6 +795,8 @@ function Library:GiveSignal(Signal)
 end
 
 function Library:Unload()
+	Library:ClearWeatherParticles()
+
 	-- Unload all of the signals
 	for Idx = #Library.Signals, 1, -1 do
 		local Connection = table.remove(Library.Signals, Idx)
@@ -5414,131 +5429,132 @@ function Library:SetBlurSize(Size)
 end
 
 do
-	local Emitter, Holder
-	local Generation = 0
+	--[[
+		Weather is drawn inside the menu, not into the world. Every flake is a plain frame on a full
+		screen layer sitting behind the window, which is why the amount is a count of particles and
+		not an emission rate, and why 120 of them is the whole budget.
 
-	local function Teardown()
-		--// Bumping this is what retires the follow loop belonging to the previous effect
-		Generation = Generation + 1
+		All of it is gated on the menu being open. The layer lives in the ScreenGui, so leaving it
+		running while the window is hidden would rain over a screen with no UI on it.
+	]]
+	local WeatherLayer = Library:Create("Frame", {
+		BackgroundTransparency = 1,
+		Size = UDim2.fromScale(1, 1),
+		Visible = false,
+		ZIndex = 0,
+		Parent = ScreenGui,
+	})
 
-		if Holder then
-			pcall(function()
-				Holder:Destroy()
-			end)
+	Library.WeatherLayer = WeatherLayer
+
+	function Library:ClearWeatherParticles()
+		for Idx = #Library.WeatherParticles, 1, -1 do
+			local Particle = table.remove(Library.WeatherParticles, Idx)
+
+			if Particle.Instance then
+				Particle.Instance:Destroy()
+			end
+		end
+	end
+
+	--// Rain is a fast straight streak, snow is a slow square that drifts sideways
+	local function StyleParticle(Particle, IsRain)
+		Particle.Instance.BackgroundColor3 = IsRain and Color3.fromRGB(120, 170, 255)
+			or Color3.fromRGB(255, 255, 255)
+		Particle.Instance.Size = IsRain and UDim2.fromOffset(2, 14) or UDim2.fromOffset(4, 4)
+
+		if IsRain then
+			Particle.Speed = math.max(Particle.Speed, 0.9)
+			Particle.Drift = 0
+		else
+			Particle.Speed = math.min(Particle.Speed, 0.34)
+		end
+	end
+
+	function Library:RefreshWeatherEffect()
+		local Enabled = Library.Toggled and Library.WeatherEffect ~= "Off" and Library.WeatherAmount > 0
+
+		WeatherLayer.Visible = Enabled
+
+		if not Enabled then
+			Library:ClearWeatherParticles()
+			return
 		end
 
-		Emitter, Holder = nil, nil
+		local IsRain = Library.WeatherEffect == "Rain"
+		local TargetCount = math.clamp(math.floor(Library.WeatherAmount), 0, 120)
+
+		while #Library.WeatherParticles > TargetCount do
+			local Particle = table.remove(Library.WeatherParticles)
+
+			if Particle and Particle.Instance then
+				Particle.Instance:Destroy()
+			end
+		end
+
+		--[[
+			Y starts negative so a fresh particle is already above the top edge and falls in rather
+			than popping into the middle of the screen, and X is random so the pool does not come
+			down as a single column.
+		]]
+		while #Library.WeatherParticles < TargetCount do
+			Library.WeatherParticles[#Library.WeatherParticles + 1] = {
+				Instance = Library:Create("Frame", {
+					AnchorPoint = Vector2.new(0.5, 0.5),
+					BackgroundColor3 = Color3.new(1, 1, 1),
+					BorderSizePixel = 0,
+					Size = UDim2.fromOffset(4, 4),
+					ZIndex = 0,
+					Parent = WeatherLayer,
+				}),
+				X = math.random(),
+				Y = -math.random(),
+				Speed = IsRain and (0.9 + math.random() * 1.1) or (0.12 + math.random() * 0.22),
+				Drift = IsRain and 0 or ((math.random() - 0.5) * 0.03),
+			}
+		end
+
+		--// Switching between rain and snow restyles what is already falling instead of rebuilding
+		for _, Particle in next, Library.WeatherParticles do
+			StyleParticle(Particle, IsRain)
+		end
 	end
 
 	--// "Off" | "Rain" | "Snow"
 	function Library:SetWeatherEffect(Effect)
-		Library.WeatherEffect = Effect or "Off"
+		if Effect ~= "Rain" and Effect ~= "Snow" then
+			Effect = "Off"
+		end
 
-		Teardown()
+		Library.WeatherEffect = Effect
+		Library:RefreshWeatherEffect()
+	end
 
-		if Library.WeatherEffect == "Off" then
+	--// Particle count, 0 to 120. 0 clears the effect without forgetting which one is picked.
+	function Library:SetWeatherAmount(Amount)
+		Library.WeatherAmount = math.clamp(math.floor(tonumber(Amount) or 0), 0, 120)
+		Library:RefreshWeatherEffect()
+	end
+
+	--// Invisible layer means the menu is shut, and then this costs one boolean read per frame
+	Library:GiveSignal(RenderStepped:Connect(function(Delta)
+		if not WeatherLayer.Visible then
 			return
 		end
 
-		--[[
-			The part is the emission volume, so it is wide and flat and rides above the camera. An
-			attachment puts everything through a single point and only a huge spread angle can then
-			cover the view, which is what had the old rain flying sideways and upwards.
-		]]
-		Holder = Instance.new("Part")
-		Holder.Name = "LinoraWeather"
-		Holder.Anchored = true
-		Holder.CanCollide = false
-		Holder.CanQuery = false
-		Holder.CanTouch = false
-		Holder.Locked = true
-		Holder.CastShadow = false
-		Holder.Transparency = 1
-		Holder.Size = Vector3.new(60, 1, 60)
+		for _, Particle in next, Library.WeatherParticles do
+			Particle.Y = Particle.Y + (Particle.Speed * Delta)
+			Particle.X = Particle.X + (Particle.Drift * Delta)
 
-		Emitter = Instance.new("ParticleEmitter")
-		Emitter.Texture = "rbxasset://textures/particles/sparkles_main.dds"
-		Emitter.LightEmission = 0.35
-		Emitter.LockedToPart = false
-		Emitter.Rate = Library.WeatherAmount or 0
-		Emitter.EmissionDirection = Enum.NormalId.Bottom
-		Emitter.Parent = Holder
-
-		if Library.WeatherEffect == "Rain" then
-			Emitter.Color = ColorSequence.new(Color3.fromRGB(170, 195, 225))
-			Emitter.Size = NumberSequence.new(0.12, 0.5)
-			Emitter.Transparency = NumberSequence.new(0.35)
-			Emitter.Speed = NumberRange.new(70, 90)
-			Emitter.Lifetime = NumberRange.new(1, 1.3)
-			Emitter.SpreadAngle = Vector2.new(6, 6)
-			Emitter.Drag = 0
-		else
-			--[[
-				Speed times lifetime is the whole travel budget. The first pass had snow covering
-				less ground than the drop height, so nearly all of it expired above the camera and
-				what did survive was spread thin over a plate far wider than the view. Measured on
-				screen at these numbers instead, with only enough drag to keep the drift.
-			]]
-			Emitter.Color = ColorSequence.new(Color3.fromRGB(255, 255, 255))
-			Emitter.Size = NumberSequence.new(0.3, 0.55)
-			Emitter.Transparency = NumberSequence.new(0.15)
-			Emitter.Speed = NumberRange.new(10, 18)
-			Emitter.Lifetime = NumberRange.new(4, 6)
-			Emitter.SpreadAngle = Vector2.new(25, 25)
-			Emitter.Drag = 0.5
-		end
-
-		Generation = Generation + 1
-
-		local Mine = Generation
-
-		task.spawn(function()
-			while Generation == Mine and Holder do
-				local Cam = workspace.CurrentCamera
-
-				if Cam then
-					--[[
-						Games swap the camera out and some of them wipe its children between rounds.
-						Either one used to leave the emitter hanging off something that no longer
-						renders and the weather just quietly stopped, which is exactly what happens
-						in Jailbird. Re-homing it whenever it drifts costs nothing and covers both,
-						and a part the game outright destroyed cannot be re-parented, so that case
-						rebuilds the effect instead of spinning on a dead instance.
-					]]
-					if Holder.Parent ~= Cam then
-						local Ok = pcall(function()
-							Holder.Parent = Cam
-						end)
-
-						if not Ok then
-							task.wait(0.5)
-
-							if Generation == Mine then
-								Library:SetWeatherEffect(Library.WeatherEffect)
-							end
-
-							return
-						end
-					end
-
-					Holder.CFrame = CFrame.new(Cam.CFrame.Position + Vector3.new(0, 22, 0))
-				end
-
-				RenderStepped:Wait()
+			--// Off the bottom, or drifted out either side, and it goes back up a fresh column
+			if Particle.Y > 1.1 or Particle.X < -0.1 or Particle.X > 1.1 then
+				Particle.X = math.random()
+				Particle.Y = -0.05 - math.random() * 0.3
 			end
-		end)
-	end
 
-	--// Particles per second. 0 stops emission without tearing the effect down.
-	function Library:SetWeatherAmount(Amount)
-		Library.WeatherAmount = math.max(tonumber(Amount) or 0, 0)
-
-		if Emitter then
-			Emitter.Rate = Library.WeatherAmount
+			Particle.Instance.Position = UDim2.new(Particle.X, 0, Particle.Y, 0)
 		end
-	end
-
-	Library:GiveSignal(ScreenGui.Destroying:Connect(Teardown))
+	end))
 end
 
 --// Toggles the library's built-in Drawing cursor. The system cursor comes back
@@ -6856,6 +6872,9 @@ function Library:CreateWindow(...)
 		end
 
 		Outer.Visible = Toggled
+
+		--// Weather belongs to the menu, so it comes up with the window and clears when it hides
+		Library:RefreshWeatherEffect()
 
 		Fading = false
 	end
