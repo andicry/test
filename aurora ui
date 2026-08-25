@@ -1,5 +1,3 @@
--- not done
-
 local InputService = game:GetService('UserInputService');
 local TextService = game:GetService('TextService');
 local CoreGui = game:GetService('CoreGui');
@@ -80,10 +78,26 @@ local Library = {
     ChatLogRows = {};
     ChatLogEnabled = false;
 
+    IsMobile = false;
+    DevicePlatform = Enum.Platform.None;
+    CanDrag = true;
+    ScrollToken = 0;
+    MobileButtons = {};
 
     Options = Options;
     Toggles = Toggles;
 };
+
+if RunService:IsStudio() then
+    Library.IsMobile = InputService.TouchEnabled and not InputService.MouseEnabled;
+else
+    pcall(function()
+        Library.DevicePlatform = InputService:GetPlatform();
+    end);
+
+    Library.IsMobile = Library.DevicePlatform == Enum.Platform.Android
+        or Library.DevicePlatform == Enum.Platform.IOS;
+end;
 
 local RainbowStep = 0
 local Hue = 0
@@ -167,6 +181,14 @@ function Library:Create(Class, Properties)
 
     for Property, Value in next, Properties do
         _Instance[Property] = Value;
+    end;
+
+    -- Touch scrolling and window dragging come in on the same input, so every
+    -- scrolling frame reports its scrolling and dragging steps aside while it happens.
+    if Library.IsMobile and _Instance:IsA('ScrollingFrame') then
+        _Instance:GetPropertyChangedSignal('CanvasPosition'):Connect(function()
+            Library:NotifyScrolling();
+        end);
     end;
 
     return _Instance;
@@ -276,6 +298,10 @@ function Library:MakeDraggable(Instance, Cutoff, DragHandle)
             return;
         end;
 
+        if Library.IsMobile and not Library.CanDrag then
+            return;
+        end;
+
         local StartX, StartY = Library:GetInputPosition(Input);
         ObjectOffset = Vector2.new(
             StartX - Instance.AbsolutePosition.X,
@@ -314,7 +340,8 @@ function Library:MakeDraggable(Instance, Cutoff, DragHandle)
             local IsMouseMove = DragInput.UserInputType == Enum.UserInputType.MouseButton1
                 and ChangedInput.UserInputType == Enum.UserInputType.MouseMovement;
             local IsTouchMove = DragInput.UserInputType == Enum.UserInputType.Touch
-                and ChangedInput.UserInputType == Enum.UserInputType.Touch;
+                and ChangedInput.UserInputType == Enum.UserInputType.Touch
+                and ChangedInput == DragInput;
 
             if not IsMouseMove and not IsTouchMove then
                 return;
@@ -332,6 +359,12 @@ function Library:MakeDraggable(Instance, Cutoff, DragHandle)
 end;
 
 function Library:AddToolTip(InfoStr, HoverInstance)
+    -- Tooltips follow the mouse cursor, which does not exist on touch: MouseEnter
+    -- still fires from a tap and would strand the tooltip at a stale position.
+    if Library.IsMobile then
+        return;
+    end;
+
     local X, Y = Library:GetTextBounds(InfoStr, Library.Font, 14);
     local Tooltip = Library:Create('Frame', {
         BackgroundColor3 = Library.MainColor,
@@ -415,26 +448,79 @@ function Library:OnHighlight(HighlightInstance, Instance, Properties, Properties
     end)
 end;
 
-function Library:MouseIsOverOpenedFrame()
+function Library:GetPointerPosition(Input)
+    if Library.IsMobile and Input and Input.Position then
+        return Input.Position.X, Input.Position.Y;
+    end;
+
+    return Mouse.X, Mouse.Y;
+end;
+
+function Library:MouseIsOverOpenedFrame(Input)
+    local PointerX, PointerY = Library:GetPointerPosition(Input);
+
     for Frame, _ in next, Library.OpenedFrames do
         local AbsPos, AbsSize = Frame.AbsolutePosition, Frame.AbsoluteSize;
 
-        if Mouse.X >= AbsPos.X and Mouse.X <= AbsPos.X + AbsSize.X
-            and Mouse.Y >= AbsPos.Y and Mouse.Y <= AbsPos.Y + AbsSize.Y then
+        if PointerX >= AbsPos.X and PointerX <= AbsPos.X + AbsSize.X
+            and PointerY >= AbsPos.Y and PointerY <= AbsPos.Y + AbsSize.Y then
 
             return true;
         end;
     end;
 end;
 
-function Library:IsMouseOverFrame(Frame)
+function Library:IsMouseOverFrame(Frame, Input)
+    local PointerX, PointerY = Library:GetPointerPosition(Input);
     local AbsPos, AbsSize = Frame.AbsolutePosition, Frame.AbsoluteSize;
 
-    if Mouse.X >= AbsPos.X and Mouse.X <= AbsPos.X + AbsSize.X
-        and Mouse.Y >= AbsPos.Y and Mouse.Y <= AbsPos.Y + AbsSize.Y then
+    if PointerX >= AbsPos.X and PointerX <= AbsPos.X + AbsSize.X
+        and PointerY >= AbsPos.Y and PointerY <= AbsPos.Y + AbsSize.Y then
 
         return true;
     end;
+end;
+
+function Library:SetAncestorScrollingEnabled(Instance, Bool)
+    local Node = Instance;
+
+    while Node and Node ~= ScreenGui do
+        if Node:IsA('ScrollingFrame') then
+            Node.ScrollingEnabled = Bool;
+        end;
+
+        Node = Node.Parent;
+    end;
+end;
+
+function Library:SuspendDragging()
+    if Library.IsMobile then
+        Library.CanDrag = false;
+    end;
+end;
+
+function Library:ResumeDragging()
+    if Library.IsMobile then
+        Library.CanDrag = true;
+    end;
+end;
+
+-- Scrolling a tab side must not also drag the window; hold dragging off for a
+-- short window after the last CanvasPosition change.
+function Library:NotifyScrolling()
+    if not Library.IsMobile then
+        return;
+    end;
+
+    local Token = tick();
+    Library.ScrollToken = Token;
+    Library.CanDrag = false;
+
+    task.delay(0.15, function()
+        if Library.ScrollToken == Token then
+            Library.CanDrag = true;
+        end;
+    end);
 end;
 
 function Library:UpdateDependencyBoxes()
@@ -577,6 +663,8 @@ function Library:Unload()
     if Library.OnUnload then
         Library.OnUnload()
     end
+
+    table.clear(Library.MobileButtons)
 
     ScreenGui:Destroy()
 end
@@ -1232,10 +1320,12 @@ do
             });
 
             function ContextMenu:Show()
+                Library:SuspendDragging()
                 self.Container.Visible = true
             end
 
             function ContextMenu:Hide()
+                Library:ResumeDragging()
                 self.Container.Visible = false
             end
 
@@ -1376,11 +1466,13 @@ do
 
             PickerFrameOuter.Visible = true;
             Library.OpenedFrames[PickerFrameOuter] = true;
+            Library:SuspendDragging();
         end;
 
         function ColorPicker:Hide()
             PickerFrameOuter.Visible = false;
             Library.OpenedFrames[PickerFrameOuter] = nil;
+            Library:ResumeDragging();
         end;
 
         function ColorPicker:SetValue(HSV, Transparency)
@@ -1489,18 +1581,66 @@ do
         end);
 
         DisplayFrame.InputBegan:Connect(function(Input)
-            if Library:IsPrimaryInput(Input) and not Library:MouseIsOverOpenedFrame() then
+            if Library:IsPrimaryInput(Input) and not Library:MouseIsOverOpenedFrame(Input) then
                 if PickerFrameOuter.Visible then
                     ColorPicker:Hide()
                 else
                     ContextMenu:Hide()
                     ColorPicker:Show()
                 end;
-            elseif Input.UserInputType == Enum.UserInputType.MouseButton2 and not Library:MouseIsOverOpenedFrame() then
+            elseif Input.UserInputType == Enum.UserInputType.MouseButton2 and not Library:MouseIsOverOpenedFrame(Input) then
                 ContextMenu:Show()
                 ColorPicker:Hide()
             end
         end);
+
+        -- Copy/paste colour is right click only, so on touch a press that stays put for a
+        -- third of a second reaches it. The tap above has already opened the picker by
+        -- then, so it is closed again first and the menu takes its place -- the same end
+        -- state a right click lands on.
+        if Library.IsMobile then
+            DisplayFrame.InputBegan:Connect(function(Input)
+                if Input.UserInputType ~= Enum.UserInputType.Touch then
+                    return;
+                end;
+
+                if Library:MouseIsOverOpenedFrame(Input) then
+                    return;
+                end;
+
+                local StartX, StartY = Library:GetInputPosition(Input);
+                local Held = true;
+
+                local Ended;
+                Ended = Input:GetPropertyChangedSignal('UserInputState'):Connect(function()
+                    if Input.UserInputState == Enum.UserInputState.End
+                        or Input.UserInputState == Enum.UserInputState.Cancel then
+
+                        Held = false;
+                        Ended:Disconnect();
+                    end;
+                end);
+
+                task.delay(0.3, function()
+                    if Ended.Connected then
+                        Ended:Disconnect();
+                    end;
+
+                    if not Held then
+                        return;
+                    end;
+
+                    local NowX, NowY = Library:GetInputPosition(Input);
+
+                    if math.abs(NowX - StartX) > 6 or math.abs(NowY - StartY) > 6 then
+                        return;
+                    end;
+
+                    ColorPicker:Hide();
+                    ContextMenu:Show();
+                end);
+            end);
+        end;
 
         if TransparencyBoxInner then
             TransparencyBoxInner.InputBegan:Connect(function(Input)
@@ -1551,20 +1691,21 @@ do
         Library:GiveSignal(InputService.InputBegan:Connect(function(Input)
             if Library:IsPrimaryInput(Input) then
                 local AbsPos, AbsSize = PickerFrameOuter.AbsolutePosition, PickerFrameOuter.AbsoluteSize;
+                local PointerX, PointerY = Library:GetPointerPosition(Input);
 
-                if Mouse.X < AbsPos.X or Mouse.X > AbsPos.X + AbsSize.X
-                    or Mouse.Y < (AbsPos.Y - 20 - 1) or Mouse.Y > AbsPos.Y + AbsSize.Y then
+                if PointerX < AbsPos.X or PointerX > AbsPos.X + AbsSize.X
+                    or PointerY < (AbsPos.Y - 20 - 1) or PointerY > AbsPos.Y + AbsSize.Y then
 
                     ColorPicker:Hide();
                 end;
 
-                if not Library:IsMouseOverFrame(ContextMenu.Container) then
+                if not Library:IsMouseOverFrame(ContextMenu.Container, Input) then
                     ContextMenu:Hide()
                 end
             end;
 
             if Input.UserInputType == Enum.UserInputType.MouseButton2 and ContextMenu.Container.Visible then
-                if not Library:IsMouseOverFrame(ContextMenu.Container) and not Library:IsMouseOverFrame(DisplayFrame) then
+                if not Library:IsMouseOverFrame(ContextMenu.Container, Input) and not Library:IsMouseOverFrame(DisplayFrame, Input) then
                     ContextMenu:Hide()
                 end
             end
@@ -1722,9 +1863,11 @@ do
 
                 ModeSelectOuter.Visible = true;
                 Library.OpenedFrames[ModeSelectOuter] = true;
+                Library:SuspendDragging();
             else
                 ModeSelectOuter.Visible = false;
                 Library.OpenedFrames[ModeSelectOuter] = nil;
+                Library:ResumeDragging();
             end;
         end;
 
@@ -1882,7 +2025,12 @@ do
         local Picking = false;
 
         PickOuter.InputBegan:Connect(function(Input)
-            if Library:IsPrimaryInput(Input) and not Library:MouseIsOverOpenedFrame() then
+            -- On touch there is no key to rebind to, and the next tap anywhere would be
+            -- captured as a nil key and wipe the bind, so touch never enters rebind mode.
+            if Library:IsPrimaryInput(Input)
+                and not (Library.IsMobile and Input.UserInputType == Enum.UserInputType.Touch)
+                and not Library:MouseIsOverOpenedFrame(Input) then
+
                 Picking = true;
 
                 DisplayLabel.Text = '';
@@ -1932,10 +2080,54 @@ do
 
                     Event:Disconnect();
                 end);
-            elseif Input.UserInputType == Enum.UserInputType.MouseButton2 and not Library:MouseIsOverOpenedFrame() then
+            elseif Input.UserInputType == Enum.UserInputType.MouseButton2 and not Library:MouseIsOverOpenedFrame(Input) then
                 SetModeSelectVisible(true);
             end;
         end);
+
+        -- Touch has no right click, so a stationary long press opens the mode menu.
+        if Library.IsMobile then
+            PickOuter.InputBegan:Connect(function(Input)
+                if Input.UserInputType ~= Enum.UserInputType.Touch then
+                    return;
+                end;
+
+                if Library:MouseIsOverOpenedFrame(Input) then
+                    return;
+                end;
+
+                local StartX, StartY = Library:GetInputPosition(Input);
+                local Held = true;
+
+                local Ended;
+                Ended = Input:GetPropertyChangedSignal('UserInputState'):Connect(function()
+                    if Input.UserInputState == Enum.UserInputState.End
+                        or Input.UserInputState == Enum.UserInputState.Cancel then
+
+                        Held = false;
+                        Ended:Disconnect();
+                    end;
+                end);
+
+                task.delay(0.3, function()
+                    if Ended.Connected then
+                        Ended:Disconnect();
+                    end;
+
+                    if (not Held) or Picking or ModeSelectOuter.Visible then
+                        return;
+                    end;
+
+                    local NowX, NowY = Library:GetInputPosition(Input);
+
+                    if math.abs(NowX - StartX) > 6 or math.abs(NowY - StartY) > 6 then
+                        return;
+                    end;
+
+                    SetModeSelectVisible(true);
+                end);
+            end);
+        end;
 
         Library:GiveSignal(InputService.InputBegan:Connect(function(Input)
             if Library:IsTyping() then
@@ -1966,9 +2158,10 @@ do
 
             if Library:IsPrimaryInput(Input) then
                 local AbsPos, AbsSize = ModeSelectOuter.AbsolutePosition, ModeSelectOuter.AbsoluteSize;
+                local PointerX, PointerY = Library:GetPointerPosition(Input);
 
-                if Mouse.X < AbsPos.X or Mouse.X > AbsPos.X + AbsSize.X
-                    or Mouse.Y < (AbsPos.Y - 20 - 1) or Mouse.Y > AbsPos.Y + AbsSize.Y then
+                if PointerX < AbsPos.X or PointerX > AbsPos.X + AbsSize.X
+                    or PointerY < (AbsPos.Y - 20 - 1) or PointerY > AbsPos.Y + AbsSize.Y then
 
                     SetModeSelectVisible(false);
                 end;
@@ -2522,7 +2715,7 @@ do
             end
 
             local function ValidateClick(Input)
-                if Library:MouseIsOverOpenedFrame() then
+                if Library:MouseIsOverOpenedFrame(Input) then
                     return false
                 end
 
@@ -2987,7 +3180,7 @@ do
         local IgnoreMouseUntil = 0;
 
         ToggleRegion.InputBegan:Connect(function(Input)
-            if not Library:IsPrimaryInput(Input) or Library:MouseIsOverOpenedFrame() then
+            if not Library:IsPrimaryInput(Input) or Library:MouseIsOverOpenedFrame(Input) then
                 return;
             end;
 
@@ -3223,7 +3416,7 @@ do
         end;
 
         SliderInner.InputBegan:Connect(function(Input)
-            if Library:IsPrimaryInput(Input) and not Library:MouseIsOverOpenedFrame() then
+            if Library:IsPrimaryInput(Input) and not Library:MouseIsOverOpenedFrame(Input) then
                 local function ApplySliderFromX(PointerX)
                     Slider.MaxSize = math.max(1, SliderInner.AbsoluteSize.X);
                     local RelativeX = math.clamp(PointerX - SliderInner.AbsolutePosition.X, 0, Slider.MaxSize);
@@ -3246,9 +3439,28 @@ do
                 local InputChangedConnection;
                 local StateConnection;
 
+                if Library.IsMobile then
+                    Library:SetAncestorScrollingEnabled(SliderInner, false);
+                    Library:SuspendDragging();
+                end;
+
+                local function StopDragging()
+                    if not Dragging then
+                        return;
+                    end;
+
+                    Dragging = false;
+
+                    if Library.IsMobile then
+                        Library:SetAncestorScrollingEnabled(SliderInner, true);
+                        Library:ResumeDragging();
+                    end;
+                end;
+
                 StateConnection = Input:GetPropertyChangedSignal('UserInputState'):Connect(function()
-                    if Input.UserInputState == Enum.UserInputState.End then
-                        Dragging = false;
+                    if Input.UserInputState == Enum.UserInputState.End
+                        or Input.UserInputState == Enum.UserInputState.Cancel then
+                        StopDragging();
                         if InputChangedConnection then
                             InputChangedConnection:Disconnect();
                         end;
@@ -3262,8 +3474,11 @@ do
                         return;
                     end;
 
-                    if ChangedInput.UserInputType == Enum.UserInputType.MouseMovement
-                        or ChangedInput.UserInputType == Enum.UserInputType.Touch then
+                    if ChangedInput.UserInputType == Enum.UserInputType.MouseMovement then
+                        local PointerX = select(1, Library:GetInputPosition(ChangedInput));
+                        ApplySliderFromX(PointerX);
+                    elseif ChangedInput.UserInputType == Enum.UserInputType.Touch
+                        and ChangedInput == Input then
                         local PointerX = select(1, Library:GetInputPosition(ChangedInput));
                         ApplySliderFromX(PointerX);
                     end;
@@ -3625,11 +3840,13 @@ do
         end;
 
         function Dropdown:OpenDropdown()
+            Library:SuspendDragging();
             ListOuter.Visible = true;
             Library.OpenedFrames[ListOuter] = true;
         end;
 
         function Dropdown:CloseDropdown()
+            Library:ResumeDragging();
             ListOuter.Visible = false;
             Library.OpenedFrames[ListOuter] = nil;
         end;
@@ -3665,7 +3882,7 @@ do
         end;
 
         DropdownOuter.InputBegan:Connect(function(Input)
-            if Library:IsPrimaryInput(Input) and not Library:MouseIsOverOpenedFrame() then
+            if Library:IsPrimaryInput(Input) and not Library:MouseIsOverOpenedFrame(Input) then
                 if ListOuter.Visible then
                     Dropdown:CloseDropdown();
                 else
@@ -3677,9 +3894,10 @@ do
         InputService.InputBegan:Connect(function(Input)
             if Library:IsPrimaryInput(Input) then
                 local AbsPos, AbsSize = ListOuter.AbsolutePosition, ListOuter.AbsoluteSize;
+                local PointerX, PointerY = Library:GetPointerPosition(Input);
 
-                if Mouse.X < AbsPos.X or Mouse.X > AbsPos.X + AbsSize.X
-                    or Mouse.Y < (AbsPos.Y - 20 - 1) or Mouse.Y > AbsPos.Y + AbsSize.Y then
+                if PointerX < AbsPos.X or PointerX > AbsPos.X + AbsSize.X
+                    or PointerY < (AbsPos.Y - 20 - 1) or PointerY > AbsPos.Y + AbsSize.Y then
 
                     Dropdown:CloseDropdown();
                 end;
@@ -4642,10 +4860,27 @@ function Library:CreateWindow(...)
 
     if type(Config.Title) ~= 'string' then Config.Title = 'No title' end
     if type(Config.TabPadding) ~= 'number' then Config.TabPadding = 0 end
-    if typeof(Config.Position) ~= 'UDim2' then Config.Position = UDim2.fromOffset(175, 50) end
+    local AutoPosition = typeof(Config.Position) ~= 'UDim2';
+    if AutoPosition then Config.Position = UDim2.fromOffset(175, 50) end
+    local MobileAutoSize = false;
     if typeof(Config.Size) ~= 'UDim2' then
-        Config.Size = InputService.TouchEnabled and UDim2.fromOffset(650, 450) or UDim2.fromOffset(800, 585)
+        if Library.IsMobile then
+            local Viewport = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or Vector2.new(1280, 720);
+            Config.Size = UDim2.fromOffset(
+                math.clamp(math.floor(Viewport.X * 0.82), 360, 650),
+                math.clamp(math.floor(Viewport.Y * 0.78), 280, 450)
+            );
+            MobileAutoSize = true;
+        else
+            Config.Size = UDim2.fromOffset(800, 585);
+        end;
     end
+
+    -- The desktop default corner would leave a phone-sized window hanging off the
+    -- bottom right, so a window that was not given a position is centred instead.
+    if Library.IsMobile and AutoPosition then
+        Config.Center = true;
+    end;
 
     if Config.Center then
         Config.AnchorPoint = Vector2.new(0.5, 0.5)
@@ -4672,7 +4907,7 @@ function Library:CreateWindow(...)
         BackgroundTransparency = 1;
         BorderSizePixel = 0;
         Position = UDim2.new(1, 0, 1, 0);
-        Size = UDim2.fromOffset(18, 18);
+        Size = Library.IsMobile and UDim2.fromOffset(32, 32) or UDim2.fromOffset(18, 18);
         ZIndex = 10;
         Parent = Outer;
     });
@@ -4685,6 +4920,21 @@ function Library:CreateWindow(...)
 
         local StartX, StartY = Library:GetInputPosition(Input);
         local StartSize = Outer.AbsoluteSize;
+
+        -- The desktop floor of 450x300 is wider than some phone screens, so on mobile the
+        -- limits are pulled in to whatever the viewport can actually show and the window
+        -- is also stopped from growing past the edge, where the handle is unreachable.
+        local MinWidth, MinHeight = 450, 300;
+        local MaxWidth, MaxHeight = math.huge, math.huge;
+
+        if Library.IsMobile then
+            local Viewport = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or Vector2.new(1280, 720);
+            MinWidth = math.min(MinWidth, math.max(280, Viewport.X - 20));
+            MinHeight = math.min(MinHeight, math.max(200, Viewport.Y - 20));
+            MaxWidth = math.max(MinWidth, Viewport.X);
+            MaxHeight = math.max(MinHeight, Viewport.Y);
+        end;
+
         local Resizing = true;
         local InputChangedConnection;
         local RenderConnection;
@@ -4711,8 +4961,8 @@ function Library:CreateWindow(...)
                 return;
             end;
 
-            local NewWidth = math.max(450, StartSize.X + (LatestX - StartX));
-            local NewHeight = math.max(300, StartSize.Y + (LatestY - StartY));
+            local NewWidth = math.clamp(StartSize.X + (LatestX - StartX), MinWidth, MaxWidth);
+            local NewHeight = math.clamp(StartSize.Y + (LatestY - StartY), MinHeight, MaxHeight);
             if not Force and math.abs(NewWidth - LastWidth) < 2 and math.abs(NewHeight - LastHeight) < 2 then
                 return;
             end;
@@ -4728,9 +4978,17 @@ function Library:CreateWindow(...)
         end;
 
         StateConnection = Input:GetPropertyChangedSignal('UserInputState'):Connect(function()
-            if Input.UserInputState == Enum.UserInputState.End then
+            local Ended = Input.UserInputState == Enum.UserInputState.End;
+
+            -- A touch can also end as Cancel, which used to leave the preview frame
+            -- behind and the handler wired up forever.
+            if Ended or Input.UserInputState == Enum.UserInputState.Cancel then
                 Resizing = false;
-                ApplyResize(true);
+
+                if Ended then
+                    ApplyResize(true);
+                end;
+
                 if InputChangedConnection then
                     InputChangedConnection:Disconnect();
                 end;
@@ -4750,8 +5008,9 @@ function Library:CreateWindow(...)
                 return;
             end;
 
-            if ChangedInput.UserInputType == Enum.UserInputType.MouseMovement
-                or ChangedInput.UserInputType == Enum.UserInputType.Touch then
+            if ChangedInput.UserInputType == Enum.UserInputType.MouseMovement then
+                LatestX, LatestY = Library:GetInputPosition(ChangedInput);
+            elseif ChangedInput.UserInputType == Enum.UserInputType.Touch and ChangedInput == Input then
                 LatestX, LatestY = Library:GetInputPosition(ChangedInput);
             end;
         end);
@@ -4796,6 +5055,33 @@ function Library:CreateWindow(...)
     });
 
     Library:MakeDraggable(Outer, 25, WindowLabel);
+
+    -- Rotating a phone swaps the viewport dimensions, so a window sized for portrait
+    -- hangs off the edge in landscape with the lower tabs out of reach. Only a size
+    -- this library picked itself follows the viewport; an explicit Size is left alone.
+    if Library.IsMobile and MobileAutoSize then
+        local Camera = workspace.CurrentCamera;
+
+        if Camera then
+            Library:GiveSignal(Camera:GetPropertyChangedSignal('ViewportSize'):Connect(function()
+                local Viewport = Camera.ViewportSize;
+                local Width = math.clamp(math.floor(Viewport.X * 0.82), 360, 650);
+                local Height = math.clamp(math.floor(Viewport.Y * 0.78), 280, 450);
+
+                Outer.Size = UDim2.fromOffset(Width, Height);
+
+                local Position = Outer.Position;
+
+                -- A centred or scale-positioned window already tracks the viewport.
+                if Position.X.Scale == 0 and Position.Y.Scale == 0 then
+                    Outer.Position = UDim2.fromOffset(
+                        math.clamp(Position.X.Offset, 0, math.max(0, Viewport.X - Width)),
+                        math.clamp(Position.Y.Offset, 0, math.max(0, Viewport.Y - Height))
+                    );
+                end;
+            end));
+        end;
+    end;
 
     local MainSectionOuter = Library:Create('Frame', {
         BackgroundColor3 = Library.MainColor;
@@ -5777,7 +6063,7 @@ function Library:CreateWindow(...)
                 end;
 
                 Button.InputBegan:Connect(function(Input)
-                    if Library:IsPrimaryInput(Input) and not Library:MouseIsOverOpenedFrame() then
+                    if Library:IsPrimaryInput(Input) and not Library:MouseIsOverOpenedFrame(Input) then
                         Tab:Show();
                         Tab:Resize();
                     end;
@@ -5860,37 +6146,61 @@ function Library:CreateWindow(...)
         Library:RefreshCustomCursor()
     end
 
-    local IsMobile = InputService.TouchEnabled;
+    if Library.IsMobile then
+        -- Every mobile button gets its own holder parented straight to the ScreenGui,
+        -- so dragging one never moves the others. Holders are auto-placed left to
+        -- right from the top-left corner and wrap once they run out of room.
+        local ButtonPadding = 14;
+        local ButtonHeight = 56;
+        local NextX, NextY = 12, 12;
+        local RowHeight = 0;
 
-    if IsMobile then
-        local MobileButtons = Library:Create('Frame', {
-            AutomaticSize = Enum.AutomaticSize.XY;
-            BackgroundTransparency = 1;
-            Position = UDim2.fromOffset(12, 12);
-            Size = UDim2.fromOffset(0, 62);
-            ZIndex = 100;
-            Parent = ScreenGui;
-        });
+        local function GetViewport()
+            return workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or Vector2.new(1280, 720);
+        end;
 
-        local MobileLayout = Library:Create('UIListLayout', {
-            FillDirection = Enum.FillDirection.Horizontal;
-            Padding = UDim.new(0, 14);
-            SortOrder = Enum.SortOrder.LayoutOrder;
-            Parent = MobileButtons;
-        });
+        local function ClampToViewport(Width, Height, X, Y)
+            local Viewport = GetViewport();
+
+            return math.clamp(X, 0, math.max(0, Viewport.X - Width)),
+                math.clamp(Y, 0, math.max(0, Viewport.Y - Height));
+        end;
 
         local function CreateMobileButton(Text, Width, Callback)
+            local ButtonWidth = Width + 44;
+            local Viewport = GetViewport();
+
+            if NextX > 12 and NextX + ButtonWidth > Viewport.X - 12 then
+                NextX = 12;
+                NextY = NextY + RowHeight + ButtonPadding;
+                RowHeight = 0;
+            end;
+
+            local PlaceX, PlaceY = ClampToViewport(ButtonWidth, ButtonHeight, NextX, NextY);
+
+            NextX = NextX + ButtonWidth + ButtonPadding;
+            RowHeight = math.max(RowHeight, ButtonHeight);
+
+            local Holder = Library:Create('Frame', {
+                BackgroundTransparency = 1;
+                BorderSizePixel = 0;
+                Position = UDim2.fromOffset(PlaceX, PlaceY);
+                Size = UDim2.fromOffset(ButtonWidth, ButtonHeight);
+                ZIndex = 100;
+                Parent = ScreenGui;
+            });
+
             local Button = Library:Create('TextButton', {
                 AutoButtonColor = false;
                 BackgroundColor3 = Library.MainColor;
                 BorderColor3 = Library.OutlineColor;
-                Size = UDim2.fromOffset(Width + 44, 56);
+                Size = UDim2.fromScale(1, 1);
                 Text = Text;
                 TextColor3 = Library.FontColor;
                 TextSize = 17;
                 Font = Library.Font;
                 ZIndex = 102;
-                Parent = MobileButtons;
+                Parent = Holder;
             });
 
             Library:AddToRegistry(Button, {
@@ -5907,11 +6217,34 @@ function Library:CreateWindow(...)
             });
 
             local PressPosition = nil;
-            local ButtonPosition = nil;
+            local StartPosition = nil;
             local Dragging = false;
             local Moved = false;
             local ActiveInput = nil;
             local IgnoreMouseUntil = 0;
+
+            local function MoveTo(Input)
+                local X, Y = Library:GetInputPosition(Input);
+                local Delta = Vector2.new(X, Y) - PressPosition;
+
+                if Delta.Magnitude >= 5 then
+                    Moved = true;
+                end;
+
+                local TargetX, TargetY = ClampToViewport(
+                    Holder.AbsoluteSize.X,
+                    Holder.AbsoluteSize.Y,
+                    StartPosition.X.Offset + Delta.X,
+                    StartPosition.Y.Offset + Delta.Y
+                );
+
+                Holder.Position = UDim2.new(
+                    StartPosition.X.Scale,
+                    TargetX,
+                    StartPosition.Y.Scale,
+                    TargetY
+                );
+            end;
 
             Button.InputBegan:Connect(function(Input)
                 if not Library:IsPrimaryInput(Input) then
@@ -5924,10 +6257,39 @@ function Library:CreateWindow(...)
 
                 local X, Y = Library:GetInputPosition(Input);
                 PressPosition = Vector2.new(X, Y);
-                ButtonPosition = MobileButtons.Position;
+                StartPosition = Holder.Position;
                 Dragging = true;
                 Moved = false;
                 ActiveInput = Input;
+
+                -- Release is tracked on the input object itself so a drag that ends
+                -- off the button still resets cleanly.
+                local StateConnection;
+                StateConnection = Input:GetPropertyChangedSignal('UserInputState'):Connect(function()
+                    if Input.UserInputState ~= Enum.UserInputState.End
+                        and Input.UserInputState ~= Enum.UserInputState.Cancel then
+                        return;
+                    end;
+
+                    StateConnection:Disconnect();
+
+                    if ActiveInput ~= Input then
+                        return;
+                    end;
+
+                    local Ended = Input.UserInputState == Enum.UserInputState.End;
+
+                    Dragging = false;
+                    ActiveInput = nil;
+
+                    if Input.UserInputType == Enum.UserInputType.Touch then
+                        IgnoreMouseUntil = os.clock() + 0.5;
+                    end;
+
+                    if Ended and not Moved and Library:IsMouseOverFrame(Holder, Input) then
+                        Callback(Button);
+                    end;
+                end);
             end);
 
             Button.InputChanged:Connect(function(Input)
@@ -5935,34 +6297,10 @@ function Library:CreateWindow(...)
                     return;
                 end;
 
-                if Input.UserInputType == Enum.UserInputType.Touch
-                    or Input.UserInputType == Enum.UserInputType.MouseMovement then
-                    local X, Y = Library:GetInputPosition(Input);
-                    local Delta = Vector2.new(X, Y) - PressPosition;
-                    if Delta.Magnitude >= 5 then
-                        Moved = true;
-                    end;
-                    MobileButtons.Position = UDim2.new(
-                        ButtonPosition.X.Scale,
-                        ButtonPosition.X.Offset + Delta.X,
-                        ButtonPosition.Y.Scale,
-                        ButtonPosition.Y.Offset + Delta.Y
-                    );
-                end;
-            end);
-
-            Button.InputEnded:Connect(function(Input)
-                if not Library:IsPrimaryInput(Input) or not Dragging then
-                    return;
-                end;
-
-                Dragging = false;
-                ActiveInput = nil;
-                if Input.UserInputType == Enum.UserInputType.Touch then
-                    IgnoreMouseUntil = os.clock() + 0.5;
-                end;
-                if not Moved then
-                    Callback(Button);
+                if Input.UserInputType == Enum.UserInputType.MouseMovement then
+                    MoveTo(Input);
+                elseif Input.UserInputType == Enum.UserInputType.Touch and Input == ActiveInput then
+                    MoveTo(Input);
                 end;
             end);
 
@@ -5972,18 +6310,13 @@ function Library:CreateWindow(...)
                     return;
                 end;
 
-                local X, Y = Library:GetInputPosition(Input);
-                local Delta = Vector2.new(X, Y) - PressPosition;
-                if Delta.Magnitude >= 5 then
-                    Moved = true;
-                end;
-                MobileButtons.Position = UDim2.new(
-                    ButtonPosition.X.Scale,
-                    ButtonPosition.X.Offset + Delta.X,
-                    ButtonPosition.Y.Scale,
-                    ButtonPosition.Y.Offset + Delta.Y
-                );
+                MoveTo(Input);
             end));
+
+            table.insert(Library.MobileButtons, {
+                Button = Button;
+                Holder = Holder;
+            });
 
             return Button;
         end;
@@ -5998,10 +6331,32 @@ function Library:CreateWindow(...)
             Button.Text = Locked and 'Unlock' or 'Lock';
         end);
 
-        Library.MobileButtons = MobileButtons;
-        Library.MobileButtonsLayout = MobileLayout;
         function Library:CreateMobileButton(Text, Width, Callback)
             return CreateMobileButton(Text, Width, Callback);
+        end;
+
+        -- A rotation can leave a button parked past the new edge, so every holder is
+        -- pulled back inside the viewport whenever it changes.
+        local Camera = workspace.CurrentCamera;
+
+        if Camera then
+            Library:GiveSignal(Camera:GetPropertyChangedSignal('ViewportSize'):Connect(function()
+                for _, Record in next, Library.MobileButtons do
+                    local Holder = Record.Holder;
+
+                    if Holder and Holder.Parent then
+                        local Position = Holder.Position;
+                        local TargetX, TargetY = ClampToViewport(
+                            Holder.AbsoluteSize.X,
+                            Holder.AbsoluteSize.Y,
+                            Position.X.Offset,
+                            Position.Y.Offset
+                        );
+
+                        Holder.Position = UDim2.new(Position.X.Scale, TargetX, Position.Y.Scale, TargetY);
+                    end;
+                end;
+            end));
         end;
     end
 
