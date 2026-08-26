@@ -1,14 +1,6 @@
 --// best linora version cmon now 
 
---[[
-	The font is cached on disk now. It was pulled off the network on every single run, and that
-	download is what the load delay was: it is fetched once and then left alone, so every run
-	after the first is entirely local. Everything here is wrapped, so a dead network costs you
-	the custom font and nothing else instead of stopping the library dead.
 
-	The Scrollbar.png fetch that used to sit here is gone with it. Every scrolling frame in the
-	library runs at ScrollBarThickness 0, so nothing was ever drawing that image.
-]]
 if not (isfile and isfile("Tahoma.ttf")) then
 	pcall(function()
 		writefile("Tahoma.ttf", game:HttpGet("https://github.com/sametexe001/luas/raw/refs/heads/main/fonts/windows-xp-tahoma.ttf"))
@@ -85,6 +77,14 @@ local Library = {
 	HudRegistry = {},
 
 	SpeedGraphInstances = {},
+	IndicatorInstances = {},
+
+	--[[
+		Frames that may only be dragged while the menu is open. A HUD element the user is meant
+		to place once wants this: with the menu shut the box still draws, but a click passes
+		straight through to the game instead of shoving the box across the screen.
+	]]
+	MenuOnlyDrag = {},
 
 	GlowObjects = {},
 	GlowTransparency = 0.5,
@@ -517,6 +517,11 @@ function Library:MakeDraggable(Instance, Cutoff, IsMainWindow)
 
 	Instance.InputBegan:Connect(function(Input)
 		if Library:IsPrimaryInput(Input) then
+			--// Opted in through Library.MenuOnlyDrag, so nothing moves while the menu is shut
+			if Library.MenuOnlyDrag[Instance] and not Library.Toggled then
+				return
+			end
+
 			if IsMainWindow then
 				if Library.CantDragForced then
 					return
@@ -819,6 +824,8 @@ function Library:Unload()
 
 	-- Drop the speed graph handles. Their frames live under the ScreenGui destroyed below
 	table.clear(Library.SpeedGraphInstances)
+	table.clear(Library.IndicatorInstances)
+	table.clear(Library.MenuOnlyDrag)
 
 	-- Call our unload callback, maybe to undo some hooks etc
 	if Library.OnUnload then
@@ -7099,10 +7106,18 @@ Players.PlayerRemoving:Connect(OnPlayerChange)
 
 	A draggable HUD box plotting horizontal speed over time.
 
-	The line is a fixed pool of thin rotated frames, so a redraw only moves what already
-	exists. The original version built a Drawing object per segment and threw all of them away
-	every frame, which is both the choppiness and the reason it could never sit inside its own
-	border - Drawing renders in screen space and ignores ClipsDescendants.
+	The plot is a fixed pool of frames, so a redraw only moves what already exists. The original
+	version built a Drawing object per segment and threw all of them away every frame, which is
+	both the choppiness and the reason it could never sit inside its own border - Drawing renders
+	in screen space and ignores ClipsDescendants.
+
+	Three modes, and the same pool draws all of them:
+
+		Lines  filled bars off the bottom edge. Empty while standing still, which is the mode
+		       that reads best at a glance and so the default.
+		Dots   one dot per sample at its own height. A flat row while idle.
+		Waves  every frame is a thin rotated segment joining one sample to the next, giving a
+		       single connected outline.
 ]]
 function Library:CreateSpeedGraph(Config)
 	Config = Config or {}
@@ -7118,6 +7133,7 @@ function Library:CreateSpeedGraph(Config)
 		Interval = Config.Interval or 0.05,
 		Thickness = Config.Thickness or 1,
 		LineColorIdx = Config.LineColorIdx or "FontColor",
+		Mode = Config.Mode or "Lines",
 		Clock = 0,
 	}
 
@@ -7168,6 +7184,20 @@ function Library:CreateSpeedGraph(Config)
 		Parent = GraphInner,
 	})
 
+	--// Accent rule under the title, the same one the watermark and keybind list carry
+	local GraphAccentLine = Library:Create("Frame", {
+		BackgroundColor3 = Library.AccentColor,
+		BorderSizePixel = 0,
+		Position = UDim2.new(0, 0, 0, 20),
+		Size = UDim2.new(1, 0, 0, 1),
+		ZIndex = 53,
+		Parent = GraphInner,
+	})
+
+	Library:AddToRegistry(GraphAccentLine, {
+		BackgroundColor3 = "AccentColor",
+	})
+
 	local GraphFrame = Library:Create("Frame", {
 		BackgroundColor3 = Library.BackgroundColor,
 		BorderColor3 = Library.OutlineColor,
@@ -7203,7 +7233,12 @@ function Library:CreateSpeedGraph(Config)
 			SpeedGraph.Lines[Idx] = nil
 		end
 
-		for i = 1, SpeedGraph.MaxHistory - 1 do
+		--[[
+			One frame per sample, not per gap. Lines and Dots need a frame for every sample, and
+			Waves simply leaves the last one hidden -- sizing the pool off the gap count was what
+			dropped a bar off the right edge of the bar modes.
+		]]
+		for i = 1, SpeedGraph.MaxHistory do
 			local Line = Library:Create("Frame", {
 				BackgroundColor3 = Library[SpeedGraph.LineColorIdx],
 				BorderSizePixel = 0,
@@ -7232,7 +7267,9 @@ function Library:CreateSpeedGraph(Config)
 		local Count = #SpeedGraph.SpeedHistory
 		local Size = GraphContent.AbsoluteSize
 
-		if Count < 2 or Size.X <= 0 or Size.Y <= 0 then
+		--// One sample is already a bar or a dot; only Waves needs a second one, and it hides
+		--// its own trailing frame anyway
+		if Count < 1 or Size.X <= 0 or Size.Y <= 0 then
 			HideLines()
 
 			return
@@ -7254,17 +7291,73 @@ function Library:CreateSpeedGraph(Config)
 			Scale = math.max(SpeedGraph.Scale, 1)
 		end
 
-		--// Newest sample pinned to the right edge, so a graph that has not filled up yet
-		--// grows inward instead of sitting squashed against the left border
-		local Step = Size.X / (SpeedGraph.MaxHistory - 1)
+		local Total = SpeedGraph.MaxHistory
+
+		--// Height of one sample as a 0-1 fraction of the box, 0 being the bottom edge
+		local function ValueAt(i)
+			return math.clamp((SpeedGraph.SpeedHistory[i] or 0) / Scale, 0, 1)
+		end
+
+		if SpeedGraph.Mode == "Lines" then
+			--// Bars growing off the bottom. The newest sample owns the rightmost slot, so a
+			--// graph that has not filled up yet grows inward instead of squashing to the left
+			local SlotW = Size.X / Total
+			local Offset = Size.X - Count * SlotW
+
+			for i = 1, #SpeedGraph.Lines do
+				local Line = SpeedGraph.Lines[i]
+
+				if i <= Count then
+					local Height = math.floor(ValueAt(i) * Size.Y)
+
+					Line.AnchorPoint = Vector2.new(0, 0)
+					Line.Rotation = 0
+					Line.Size = UDim2.fromOffset(math.max(1, math.ceil(SlotW)), Height)
+					Line.Position = UDim2.new(0, math.floor(Offset + (i - 1) * SlotW), 1, -Height)
+					Line.Visible = Height > 0
+				else
+					Line.Visible = false
+				end
+			end
+
+			return
+		end
+
+		--// Newest sample pinned to the right edge, same reasoning as the bars above
+		local Step = Size.X / math.max(Total - 1, 1)
 		local Offset = Size.X - (Count - 1) * Step
 
 		local function PointAt(i)
-			local Height = math.clamp(SpeedGraph.SpeedHistory[i] / Scale, 0, 1)
-
-			return Offset + (i - 1) * Step, Size.Y - Height * Size.Y
+			return Offset + (i - 1) * Step, Size.Y - ValueAt(i) * Size.Y
 		end
 
+		if SpeedGraph.Mode == "Dots" then
+			local Dot = math.max(2, SpeedGraph.Thickness + 1)
+			local Half = Dot * 0.5
+
+			for i = 1, #SpeedGraph.Lines do
+				local Line = SpeedGraph.Lines[i]
+
+				if i <= Count then
+					local X, Y = PointAt(i)
+
+					Line.AnchorPoint = Vector2.new(0.5, 0.5)
+					Line.Rotation = 0
+					Line.Size = UDim2.fromOffset(Dot, Dot)
+					Line.Position = UDim2.fromOffset(
+						math.floor(X + 0.5),
+						math.floor(math.clamp(Y, Half, Size.Y - Half) + 0.5)
+					)
+					Line.Visible = true
+				else
+					Line.Visible = false
+				end
+			end
+
+			return
+		end
+
+		--// Waves: a thin rotated segment per gap, which is what makes it one connected outline
 		for i = 1, #SpeedGraph.Lines do
 			local Line = SpeedGraph.Lines[i]
 
@@ -7274,6 +7367,7 @@ function Library:CreateSpeedGraph(Config)
 				local dX, dY = X2 - X1, Y2 - Y1
 				local Length = math.sqrt(dX * dX + dY * dY)
 
+				Line.AnchorPoint = Vector2.new(0.5, 0.5)
 				Line.Position = UDim2.fromOffset(math.floor((X1 + X2) * 0.5 + 0.5), math.floor((Y1 + Y2) * 0.5 + 0.5))
 				Line.Size = UDim2.fromOffset(math.max(1, math.ceil(Length)), SpeedGraph.Thickness)
 				Line.Rotation = math.deg(math.atan2(dY, dX))
@@ -7354,6 +7448,22 @@ function Library:CreateSpeedGraph(Config)
 		Redraw()
 	end
 
+	--// "Lines", "Dots" or "Waves". Anything unrecognised falls through to Waves
+	function SpeedGraph:SetMode(Value)
+		SpeedGraph.Mode = Value or "Lines"
+
+		--// The modes leave the pool in each other's transforms, so reset before redrawing
+		for i = 1, #SpeedGraph.Lines do
+			local Line = SpeedGraph.Lines[i]
+
+			Line.Rotation = 0
+			Line.AnchorPoint = Vector2.new(0, 0)
+			Line.Visible = false
+		end
+
+		Redraw()
+	end
+
 	function SpeedGraph:SetAutoScale(Bool)
 		SpeedGraph.AutoScale = not not Bool
 
@@ -7393,6 +7503,435 @@ function Library:CreateSpeedGraph(Config)
 	table.insert(Library.SpeedGraphInstances, SpeedGraph)
 
 	return SpeedGraph
+end
+
+--[[
+	Indicator
+
+	A draggable HUD card for whoever you are currently locked on to. The library only owns the
+	frame, the border, the accent rule and the glow -- what it actually SHOWS is entirely up to
+	the script, because every game stores health, armour, ammo and shields somewhere different.
+
+	You hand it a list of rows and each row brings its own reader:
+
+		Library:CreateIndicator({
+			Title = "Target",
+			Rows = {
+				{ Type = "Text", Get = function(Target) return Target.DisplayName end },
+				{ Type = "Bar",  Get = function(Target)
+					local Hum = ...
+					return Hum.Health, Hum.MaxHealth, Color3.fromRGB(70, 205, 90)
+				end },
+			},
+		})
+
+	A Text row's Get returns a string, and optionally a colour. A Bar row's Get returns value,
+	max and optionally a colour. Return nil from either and that one row hides itself, so a game
+	with no armour simply shows one bar fewer instead of an empty one.
+
+	The card is only draggable while the menu is open. With the menu shut it is a HUD and clicks
+	go to the game, which is what stops it being dragged around mid-fight.
+]]
+function Library:CreateIndicator(Config)
+	Config = Config or {}
+
+	local Indicator = {
+		Visible = true,
+		Target = nil,
+		Rows = Config.Rows or {},
+		RowObjects = {},
+		ShowAvatar = Config.ShowAvatar ~= false,
+		AvatarSize = Config.AvatarSize or 78,
+		Width = Config.Width or 300,
+	}
+
+	local Outer = Library:Create("Frame", {
+		BackgroundColor3 = Color3.new(0, 0, 0),
+		BorderColor3 = Color3.new(0, 0, 0),
+		BorderSizePixel = 0,
+		Position = Config.Position or UDim2.fromOffset(50, 500),
+		Size = UDim2.fromOffset(Indicator.Width, 120),
+		ZIndex = 60,
+		Parent = ScreenGui,
+	})
+
+	Library:CreateGlow(Outer, {
+		Size = 24,
+		ZIndex = 59,
+	})
+
+	local Inner = Library:Create("Frame", {
+		BackgroundColor3 = Library.MainColor,
+		BorderColor3 = Library.AccentColor,
+		BorderMode = Enum.BorderMode.Inset,
+		Position = UDim2.new(0, 1, 0, 1),
+		Size = UDim2.new(1, -2, 1, -2),
+		ZIndex = 61,
+		Parent = Outer,
+	})
+
+	Library:AddToRegistry(Inner, {
+		BackgroundColor3 = "MainColor",
+		BorderColor3 = "AccentColor",
+	})
+
+	local TitleLabel = Library:CreateLabel({
+		Position = UDim2.new(0, 7, 0, 0),
+		Size = UDim2.new(1, -14, 0, 20),
+		TextSize = 14,
+		Text = Config.Title or "Target",
+		TextXAlignment = Enum.TextXAlignment.Left,
+		ZIndex = 63,
+		Parent = Inner,
+	})
+
+	--// The accent rule. Registered, so a theme change repaints it with everything else
+	local AccentLine = Library:Create("Frame", {
+		BackgroundColor3 = Library.AccentColor,
+		BorderSizePixel = 0,
+		Position = UDim2.new(0, 0, 0, 20),
+		Size = UDim2.new(1, 0, 0, 1),
+		ZIndex = 63,
+		Parent = Inner,
+	})
+
+	Library:AddToRegistry(AccentLine, {
+		BackgroundColor3 = "AccentColor",
+	})
+
+	local Body = Library:Create("Frame", {
+		BackgroundTransparency = 1,
+		Position = UDim2.new(0, 7, 0, 26),
+		Size = UDim2.new(1, -14, 1, -33),
+		ZIndex = 61,
+		Parent = Inner,
+	})
+
+	local AvatarOuter = Library:Create("Frame", {
+		BackgroundColor3 = Color3.new(0, 0, 0),
+		BorderSizePixel = 0,
+		Size = UDim2.fromOffset(Indicator.AvatarSize, Indicator.AvatarSize),
+		ZIndex = 62,
+		Parent = Body,
+	})
+
+	local AvatarInner = Library:Create("Frame", {
+		BackgroundColor3 = Library.BackgroundColor,
+		BorderColor3 = Library.OutlineColor,
+		BorderMode = Enum.BorderMode.Inset,
+		ClipsDescendants = true,
+		Position = UDim2.new(0, 1, 0, 1),
+		Size = UDim2.new(1, -2, 1, -2),
+		ZIndex = 62,
+		Parent = AvatarOuter,
+	})
+
+	Library:AddToRegistry(AvatarInner, {
+		BackgroundColor3 = "BackgroundColor",
+		BorderColor3 = "OutlineColor",
+	})
+
+	local AvatarImage = Library:Create("ImageLabel", {
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Image = "",
+		ScaleType = Enum.ScaleType.Crop,
+		Size = UDim2.new(1, 0, 1, 0),
+		ZIndex = 63,
+		Parent = AvatarInner,
+	})
+
+	--// Rows stack in creation order, so the list the script passes is the order on screen
+	local RowHolder = Library:Create("Frame", {
+		BackgroundTransparency = 1,
+		ZIndex = 62,
+		Parent = Body,
+	})
+
+	Library:Create("UIListLayout", {
+		Padding = UDim.new(0, 2),
+		FillDirection = Enum.FillDirection.Vertical,
+		SortOrder = Enum.SortOrder.LayoutOrder,
+		Parent = RowHolder,
+	})
+
+	local ROW_HEIGHT = { Bar = 15, Text = 14 }
+
+	--// A Text row is one label. Kept deliberately plain so it lines up with the bars below it
+	local function BuildTextRow()
+		local Row = { Type = "Text" }
+
+		Row.Frame = Library:Create("Frame", {
+			BackgroundTransparency = 1,
+			Size = UDim2.new(1, 0, 0, ROW_HEIGHT.Text),
+			ZIndex = 62,
+			Parent = RowHolder,
+		})
+
+		Row.Label = Library:CreateLabel({
+			Size = UDim2.new(1, 0, 1, 0),
+			TextSize = 13,
+			Text = "",
+			TextXAlignment = Enum.TextXAlignment.Left,
+			TextTruncate = Enum.TextTruncate.AtEnd,
+			ZIndex = 63,
+			Parent = Row.Frame,
+		})
+
+		return Row
+	end
+
+	--[[
+		A Bar row is the same three-frame sandwich the rest of the library uses -- black outline,
+		themed trough, then the fill on top -- with the reading centred over it rather than off
+		to the side, so a narrow card never pushes the numbers out of the box.
+	]]
+	local function BuildBarRow()
+		local Row = { Type = "Bar" }
+
+		Row.Frame = Library:Create("Frame", {
+			BackgroundColor3 = Color3.new(0, 0, 0),
+			BorderSizePixel = 0,
+			Size = UDim2.new(1, 0, 0, ROW_HEIGHT.Bar),
+			ZIndex = 62,
+			Parent = RowHolder,
+		})
+
+		local Trough = Library:Create("Frame", {
+			BackgroundColor3 = Library.BackgroundColor,
+			BorderColor3 = Library.OutlineColor,
+			BorderMode = Enum.BorderMode.Inset,
+			ClipsDescendants = true,
+			Position = UDim2.new(0, 1, 0, 1),
+			Size = UDim2.new(1, -2, 1, -2),
+			ZIndex = 62,
+			Parent = Row.Frame,
+		})
+
+		Library:AddToRegistry(Trough, {
+			BackgroundColor3 = "BackgroundColor",
+			BorderColor3 = "OutlineColor",
+		})
+
+		Row.Fill = Library:Create("Frame", {
+			BackgroundColor3 = Library.AccentColor,
+			BorderSizePixel = 0,
+			Size = UDim2.new(1, 0, 1, 0),
+			ZIndex = 63,
+			Parent = Trough,
+		})
+
+		--// Only registered while the row has no colour of its own, otherwise a theme change
+		--// would repaint a health bar that is deliberately green
+		Row.Registered = true
+
+		Library:AddToRegistry(Row.Fill, {
+			BackgroundColor3 = "AccentColor",
+		})
+
+		Row.Label = Library:CreateLabel({
+			Size = UDim2.new(1, 0, 1, 0),
+			TextSize = 12,
+			Text = "",
+			TextXAlignment = Enum.TextXAlignment.Center,
+			ZIndex = 64,
+			Parent = Trough,
+		})
+
+		return Row
+	end
+
+	local function ClearRows()
+		for Idx = #Indicator.RowObjects, 1, -1 do
+			local Row = Indicator.RowObjects[Idx]
+
+			if Row.Registered and Row.Fill then
+				Library:RemoveFromRegistry(Row.Fill)
+			end
+
+			Row.Frame:Destroy()
+			Indicator.RowObjects[Idx] = nil
+		end
+	end
+
+	--// Card height follows whichever is taller, the avatar or the stack of rows, so adding a
+	--// row grows the box instead of pushing the last one out through the bottom border
+	local function Resize()
+		local Height = 0
+
+		for Idx = 1, #Indicator.Rows do
+			local Def = Indicator.Rows[Idx]
+
+			Height = Height + (ROW_HEIGHT[Def.Type or "Text"] or ROW_HEIGHT.Text) + 2
+		end
+
+		Height = math.max(Height - 2, 0)
+
+		local AvatarWidth = Indicator.ShowAvatar and Indicator.AvatarSize + 8 or 0
+
+		AvatarOuter.Visible = Indicator.ShowAvatar
+		AvatarOuter.Size = UDim2.fromOffset(Indicator.AvatarSize, Indicator.AvatarSize)
+
+		RowHolder.Position = UDim2.new(0, AvatarWidth, 0, 0)
+		RowHolder.Size = UDim2.new(1, -AvatarWidth, 0, Height)
+
+		local Content = math.max(Height, Indicator.ShowAvatar and Indicator.AvatarSize or 0)
+
+		Outer.Size = UDim2.fromOffset(Indicator.Width, Content + 33)
+	end
+
+	local function Rebuild()
+		ClearRows()
+
+		for Idx = 1, #Indicator.Rows do
+			local Def = Indicator.Rows[Idx]
+			local Row = Def.Type == "Bar" and BuildBarRow() or BuildTextRow()
+
+			Row.Get = Def.Get
+			Row.Format = Def.Format
+			Row.Text = Def.Text
+			Row.Color = Def.Color
+
+			--// A row with a fixed colour opts out of the accent registry, see BuildBarRow
+			if Row.Type == "Bar" and Def.Color then
+				Library:RemoveFromRegistry(Row.Fill)
+
+				Row.Registered = false
+				Row.Fill.BackgroundColor3 = Def.Color
+			end
+
+			Indicator.RowObjects[Idx] = Row
+		end
+
+		Resize()
+	end
+
+	--// One pass over the rows. Anything a Get cannot answer for hides that row and nothing else
+	local function Refresh()
+		local Target = Indicator.Target
+
+		for Idx = 1, #Indicator.RowObjects do
+			local Row = Indicator.RowObjects[Idx]
+
+			if not Row.Get then
+				Row.Frame.Visible = false
+			elseif Row.Type == "Bar" then
+				local Ok, Value, Max, Color = pcall(Row.Get, Target)
+
+				if not Ok or type(Value) ~= "number" then
+					Row.Frame.Visible = false
+				else
+					Max = type(Max) == "number" and Max or 100
+
+					local Fraction = math.clamp(Value / math.max(Max, 1), 0, 1)
+
+					Row.Frame.Visible = true
+					Row.Fill.Size = UDim2.new(Fraction, 0, 1, 0)
+
+					if Color then
+						Row.Fill.BackgroundColor3 = Color
+					end
+
+					Row.Label.Text = Row.Format
+							and string.format(Row.Format, Value, Max)
+						or string.format("%s%d/%d", Row.Text and Row.Text .. " " or "", Value + 0.5, Max + 0.5)
+				end
+			else
+				local Ok, Text, Color = pcall(Row.Get, Target)
+
+				if not Ok or Text == nil then
+					Row.Frame.Visible = false
+				else
+					Row.Frame.Visible = true
+					Row.Label.Text = tostring(Text)
+					Row.Label.TextColor3 = Color or Row.Color or Library.FontColor
+				end
+			end
+		end
+	end
+
+	function Indicator:SetTitle(Text)
+		TitleLabel.Text = Text or "Target"
+	end
+
+	--// Anything with a UserId gets an avatar; a non-player target just shows the rows
+	function Indicator:SetTarget(Target)
+		Indicator.Target = Target
+
+		if Target and typeof(Target) == "Instance" and Target:IsA("Player") then
+			AvatarImage.Image = "rbxthumb://type=AvatarHeadShot&id=" .. Target.UserId .. "&w=150&h=150"
+		else
+			AvatarImage.Image = ""
+		end
+
+		Refresh()
+	end
+
+	function Indicator:ClearTarget()
+		Indicator:SetTarget(nil)
+	end
+
+	function Indicator:GetTarget()
+		return Indicator.Target
+	end
+
+	function Indicator:SetVisible(Bool)
+		Indicator.Visible = not not Bool
+		Outer.Visible = Indicator.Visible
+	end
+
+	--// Swap the whole row list at runtime. This is the one the example drives from its toggles
+	function Indicator:SetRows(Rows)
+		Indicator.Rows = Rows or {}
+
+		Rebuild()
+		Refresh()
+	end
+
+	function Indicator:SetShowAvatar(Bool)
+		Indicator.ShowAvatar = not not Bool
+
+		Resize()
+	end
+
+	function Indicator:SetWidth(Value)
+		Indicator.Width = math.max(120, Value or 300)
+
+		Resize()
+	end
+
+	function Indicator:Destroy()
+		for Idx = #Library.IndicatorInstances, 1, -1 do
+			if Library.IndicatorInstances[Idx] == Indicator then
+				table.remove(Library.IndicatorInstances, Idx)
+			end
+		end
+
+		Library.MenuOnlyDrag[Outer] = nil
+
+		Outer:Destroy()
+	end
+
+	Library:GiveSignal(RenderStepped:Connect(function()
+		if not Outer.Visible then
+			return
+		end
+
+		Refresh()
+	end))
+
+	--// Placed once with the menu open, then left alone. See Library.MenuOnlyDrag
+	Library.MenuOnlyDrag[Outer] = true
+
+	Library:MakeDraggable(Outer, 26)
+
+	Rebuild()
+
+	Indicator.Frame = Outer
+
+	table.insert(Library.IndicatorInstances, Indicator)
+
+	return Indicator
 end
 
 getgenv().Library = Library
