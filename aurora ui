@@ -1,5 +1,6 @@
 local InputService = game:GetService('UserInputService');
 local TextService = game:GetService('TextService');
+local HttpService = game:GetService('HttpService');
 local CoreGui = game:GetService('CoreGui');
 local Lighting = game:GetService('Lighting');
 local Teams = game:GetService('Teams');
@@ -172,6 +173,281 @@ function Library:AttemptSave()
     end;
 end;
 
+--// Custom font support.
+--// Library.Font stays an Enum.Font because TextService:GetTextSize only accepts one, so it
+--// keeps doing every measurement. The downloaded ttfs come back as Font objects, which can
+--// only ride on FontFace, so the two live side by side: FontFace paints, Font measures, and
+--// FontScaleX/Y carry the measured width/height ratio between the two.
+local FONT_BASE = 'https://github.com/i77lhm/storage/raw/refs/heads/main/fonts/';
+local FONT_ROOT = 'Aurora';
+local FONT_FOLDER = 'Aurora/fonts';
+local FONT_REF = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+
+Library.FontName = 'Default';
+Library.FontFace = nil;
+Library.FontScaleX = 1;
+Library.FontScaleY = 1;
+Library.LoadedFonts = {};
+Library.FontObjects = setmetatable({}, { __mode = 'k' });
+
+--// 'Default' is the built-in Enum and downloads nothing; every other entry is a file name
+--// under FONT_BASE.
+Library.Fonts = {
+    { Name = 'Default' };
+    { Name = 'Comfortaa', File = 'Comfortaa-Regular.ttf' };
+    { Name = 'Hanken Grotesk', File = 'HankenGrotesk-SemiBold.ttf' };
+    { Name = 'Inter Medium', File = 'Inter_28pt-Medium.ttf' };
+    { Name = 'Inter SemiBold', File = 'Inter_28pt-SemiBold.ttf' };
+    { Name = 'Light Modern', File = 'Light Modern.ttf' };
+    { Name = 'Minecraftia', File = 'Minecraftia-Regular.ttf' };
+    { Name = 'Proggy Clean', File = 'ProggyClean.ttf' };
+    { Name = 'Proggy Tiny', File = 'ProggyTiny.ttf' };
+    { Name = 'Rubik', File = 'Rubik-Regular.ttf' };
+    { Name = 'Tahoma Modern Bold', File = 'Tahoma-Modern-Bold.ttf' };
+    { Name = 'Tahoma Modern', File = 'Tahoma-Modern.ttf' };
+    { Name = 'Verdana', File = 'Verdana-Font.ttf' };
+    { Name = 'Tahoma 8px', File = 'fs-tahoma-8px.ttf' };
+    { Name = 'Open Sans PX', File = 'open-sans-px.ttf' };
+    { Name = 'Smallest Pixel', File = 'smallest_pixel-7.ttf' };
+    { Name = 'Tahoma Bold', File = 'tahoma_bold.ttf' };
+};
+
+function Library:GetFontNames()
+    local Names = {};
+
+    for Idx, Entry in next, Library.Fonts do
+        Names[Idx] = Entry.Name;
+    end;
+
+    return Names;
+end;
+
+function Library:GetFontEntry(Name)
+    for _, Entry in next, Library.Fonts do
+        if Entry.Name == Name then
+            return Entry;
+        end;
+    end;
+end;
+
+local function EnsureFontFolder()
+    if not (isfolder and makefolder) then
+        return false;
+    end;
+
+    if not isfolder(FONT_ROOT) then
+        makefolder(FONT_ROOT);
+    end;
+
+    if not isfolder(FONT_FOLDER) then
+        makefolder(FONT_FOLDER);
+    end;
+
+    return isfolder(FONT_FOLDER);
+end;
+
+--// The .font descriptor method: cache the ttf on disk, write a one-face family json beside
+--// it, then hand the family back through getcustomasset so Font.new can take it.
+local function RegisterFontFile(Entry)
+    if not (isfile and writefile and getcustomasset) then
+        return nil;
+    end;
+
+    if not EnsureFontFolder() then
+        return nil;
+    end;
+
+    local TtfPath = FONT_FOLDER .. '/' .. Entry.File;
+    local FamilyPath = FONT_FOLDER .. '/' .. Entry.File .. '.font';
+
+    if not isfile(TtfPath) then
+        local Ok, Data = pcall(game.HttpGet, game, FONT_BASE .. Entry.File:gsub(' ', '%%20'));
+
+        if (not Ok) or type(Data) ~= 'string' or #Data < 1024 then
+            return nil;
+        end;
+
+        writefile(TtfPath, Data);
+    end;
+
+    local AssetOk, TtfAsset = pcall(getcustomasset, TtfPath);
+
+    if (not AssetOk) or not TtfAsset then
+        return nil;
+    end;
+
+    --// getcustomasset ids are only valid for the current session, so the descriptor is
+    --// rewritten every load even when the ttf is already cached.
+    if isfile(FamilyPath) and delfile then
+        delfile(FamilyPath);
+    end;
+
+    local EncodeOk, Descriptor = pcall(HttpService.JSONEncode, HttpService, {
+        name = Entry.Name;
+        faces = {
+            {
+                name = 'Normal';
+                weight = 400;
+                style = 'Normal';
+                assetId = TtfAsset;
+            };
+        };
+    });
+
+    if not EncodeOk then
+        return nil;
+    end;
+
+    writefile(FamilyPath, Descriptor);
+
+    local FamilyOk, FamilyAsset = pcall(getcustomasset, FamilyPath);
+
+    if (not FamilyOk) or not FamilyAsset then
+        return nil;
+    end;
+
+    return FamilyAsset;
+end
+
+local function LoadFontFace(Entry)
+    local Cached = Library.LoadedFonts[Entry.Name];
+
+    if Cached ~= nil then
+        --// false is a remembered failure, so a bad font is not re-downloaded on every pick.
+        return Cached or nil;
+    end;
+
+    local Asset = RegisterFontFile(Entry);
+    local Face = nil;
+
+    if Asset then
+        local Ok, Result = pcall(Font.new, Asset, Enum.FontWeight.Regular, Enum.FontStyle.Normal);
+
+        if Ok then
+            Face = Result;
+        end;
+    end;
+
+    Library.LoadedFonts[Entry.Name] = Face or false;
+
+    return Face;
+end
+
+local MetricLabel = nil;
+
+local function GetMetricLabel()
+    if MetricLabel and MetricLabel.Parent then
+        return MetricLabel;
+    end;
+
+    MetricLabel = Instance.new('TextLabel');
+    MetricLabel.Name = 'FontMetric';
+    MetricLabel.BackgroundTransparency = 1;
+    MetricLabel.Position = UDim2.fromOffset(-10000, -10000);
+    MetricLabel.Size = UDim2.fromOffset(8192, 8192);
+    MetricLabel.Text = '';
+    MetricLabel.TextTransparency = 1;
+    MetricLabel.TextXAlignment = Enum.TextXAlignment.Left;
+    MetricLabel.TextYAlignment = Enum.TextYAlignment.Top;
+    MetricLabel.ZIndex = 0;
+    MetricLabel.Parent = ScreenGui;
+
+    return MetricLabel;
+end
+
+--// TextBounds is only filled in once the label has actually been laid out, hence the frame
+--// wait. Both scales fall back to 1, which just leaves every measurement on Arial metrics.
+local function CalibrateFont(Face)
+    Library.FontScaleX = 1;
+    Library.FontScaleY = 1;
+
+    if not Face then
+        return;
+    end;
+
+    local Ok, Bounds = pcall(function()
+        local Label = GetMetricLabel();
+
+        Label.FontFace = Face;
+        Label.TextSize = 14;
+        Label.Text = FONT_REF;
+
+        RenderStepped:Wait();
+
+        local Measured = Label.TextBounds;
+
+        Label.Text = '';
+
+        return Measured;
+    end);
+
+    if (not Ok) or not Bounds then
+        return;
+    end;
+
+    local Base = TextService:GetTextSize(FONT_REF, 14, Library.Font, Vector2.new(8192, 8192));
+
+    if Bounds.X > 0 and Base.X > 0 then
+        Library.FontScaleX = Bounds.X / Base.X;
+    end;
+
+    if Bounds.Y > 0 and Base.Y > 0 then
+        Library.FontScaleY = Bounds.Y / Base.Y;
+    end;
+end
+
+function Library:ApplyFont(Inst)
+    if Library.FontFace then
+        Inst.FontFace = Library.FontFace;
+    else
+        Inst.Font = Library.Font;
+    end;
+end;
+
+function Library:RegisterFontObject(Inst)
+    Library.FontObjects[Inst] = true;
+
+    pcall(Library.ApplyFont, Library, Inst);
+end;
+
+function Library:SetFont(Name)
+    local Entry = Library:GetFontEntry(Name);
+
+    if not Entry then
+        return false;
+    end;
+
+    local Face = nil;
+
+    if Entry.File then
+        Face = LoadFontFace(Entry);
+
+        if not Face then
+            Library:Notify(string.format('Font "%s" failed to load', Entry.Name), 4);
+            return false;
+        end;
+    end;
+
+    Library.FontName = Entry.Name;
+    Library.FontFace = Face;
+
+    CalibrateFont(Face);
+
+    for Inst in next, Library.FontObjects do
+        if not pcall(Library.ApplyFont, Library, Inst) then
+            Library.FontObjects[Inst] = nil;
+        end;
+    end;
+
+    --// Anything sized off GetTextBounds at build time keeps its old width until it is next
+    --// rebuilt; the watermark is the one piece that is worth re-measuring straight away.
+    if Library.Watermark then
+        pcall(Library.UpdateWatermark, Library);
+    end;
+
+    return true;
+end;
+
 function Library:Create(Class, Properties)
     local _Instance = Class;
 
@@ -181,6 +457,12 @@ function Library:Create(Class, Properties)
 
     for Property, Value in next, Properties do
         _Instance[Property] = Value;
+    end;
+
+    --// Every text object in the library is built with Font = Library.Font, so that key is
+    --// what marks the ones a font switch has to repaint. Blank click-catchers never set it.
+    if Properties.Font ~= nil then
+        Library:RegisterFontObject(_Instance);
     end;
 
     -- Touch scrolling and window dragging come in on the same input, so every
@@ -534,8 +816,18 @@ function Library:MapValue(Value, MinA, MaxA, MinB, MaxB)
 end;
 
 function Library:GetTextBounds(Text, Font, Size, Resolution)
-    local Bounds = TextService:GetTextSize(Text, Size, Font, Resolution or Vector2.new(1920, 1080))
-    return Bounds.X, Bounds.Y
+    local ScaleX = Library.FontScaleX;
+    local ScaleY = Library.FontScaleY;
+    local Frame = Resolution or Vector2.new(1920, 1080);
+
+    --// The wrap width is in real-font pixels, so it has to come back to Arial pixels before
+    --// the Arial measurement wraps on it, or a wider face would be measured as wrapping late.
+    if ScaleX > 0 and ScaleX ~= 1 then
+        Frame = Vector2.new(Frame.X / ScaleX, Frame.Y);
+    end;
+
+    local Bounds = TextService:GetTextSize(Text, Size, Font or Library.Font, Frame)
+    return Bounds.X * ScaleX, Bounds.Y * ScaleY
 end;
 
 function Library:GetDarkerColor(Color)
@@ -3015,7 +3307,7 @@ do
                 if cursor ~= -1 then
 
                     local subtext = string.sub(Box.Text, 1, cursor-1)
-                    local width = TextService:GetTextSize(subtext, Box.TextSize, Box.Font, Vector2.new(math.huge, math.huge)).X
+                    local width = Library:GetTextBounds(subtext, Library.Font, Box.TextSize, Vector2.new(math.huge, math.huge))
 
 
                     local currentCursorPos = Box.Position.X.Offset + width
