@@ -522,6 +522,26 @@ function Library:CreateLabel(Properties, IsHud)
     return Library:Create(_Instance, Properties);
 end;
 
+--// Toggles and labels are the only two controls a colorpicker or keybind can hang off, and both lay
+--// their addons out in a right-aligned row on the label itself. That row used to be written out at
+--// each of the two sites and the label copy was missing the right padding, so a label's swatch sat
+--// 8px further out than every toggle's and a column of pickers came out ragged. One definition now,
+--// so the two cannot drift apart again.
+function Library:CreateAddonRow(Label)
+    Library:Create('UIListLayout', {
+        Padding = UDim.new(0, 4);
+        FillDirection = Enum.FillDirection.Horizontal;
+        HorizontalAlignment = Enum.HorizontalAlignment.Right;
+        SortOrder = Enum.SortOrder.LayoutOrder;
+        Parent = Label;
+    });
+
+    Library:Create('UIPadding', {
+        PaddingRight = UDim.new(0, 8);
+        Parent = Label;
+    });
+end;
+
 function Library:IsPrimaryInput(Input)
     return Input.UserInputType == Enum.UserInputType.MouseButton1 or Input.UserInputType == Enum.UserInputType.Touch;
 end;
@@ -3166,13 +3186,7 @@ do
             local Y = select(2, Library:GetTextBounds(Text, Library.Font, 11, Vector2.new(TextLabel.AbsoluteSize.X, math.huge)))
             TextLabel.Size = UDim2.new(1, -4, 0, Y)
         else
-            Library:Create('UIListLayout', {
-                Padding = UDim.new(0, 4);
-                FillDirection = Enum.FillDirection.Horizontal;
-                HorizontalAlignment = Enum.HorizontalAlignment.Right;
-                SortOrder = Enum.SortOrder.LayoutOrder;
-                Parent = TextLabel;
-            });
+            Library:CreateAddonRow(TextLabel);
         end
 
         Label.TextLabel = TextLabel;
@@ -3409,13 +3423,20 @@ do
         return Button;
     end;
 
-    function Funcs:AddDivider()
+    --// A gap rather than a rule. Once a groupbox has more than a couple of sections the drawn
+    --// line reads as clutter, and plain space separates them just as well, so this is what every
+    --// existing AddDivider call site now gets. Pass a number to widen or tighten the gap; AddLine
+    --// below still draws the ruled separator for anywhere that actually wants one.
+    function Funcs:AddDivider(Size)
+        local Groupbox = self;
+
+        Groupbox:AddBlank(type(Size) == 'number' and Size or 20);
+        Groupbox:Resize();
+    end
+
+    function Funcs:AddLine()
         local Groupbox = self;
         local Container = self.Container
-
-        local Divider = {
-            Type = 'Divider',
-        }
 
         Groupbox:AddBlank(2);
         local DividerOuter = Library:Create('Frame', {
@@ -3691,19 +3712,7 @@ do
             Parent = ToggleOuter;
         });
 
-        Library:Create('UIListLayout', {
-            Padding = UDim.new(0, 4);
-            FillDirection = Enum.FillDirection.Horizontal;
-            HorizontalAlignment = Enum.HorizontalAlignment.Right;
-            SortOrder = Enum.SortOrder.LayoutOrder;
-            Parent = ToggleLabel;
-        });
-
-
-        Library:Create('UIPadding', {
-            PaddingRight = UDim.new(0, 8);
-            Parent = ToggleLabel;
-        });
+        Library:CreateAddonRow(ToggleLabel);
 
         local ToggleRegion = Library:Create('Frame', {
             BackgroundTransparency = 1;
