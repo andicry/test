@@ -63,6 +63,11 @@ local Library = {
     GlowTransparency = 0.35;
     BlurSize = 0;
     CustomCursorEnabled = true;
+    LogoEnabled = true;
+    LogoSize = 420;
+    LogoSpeed = 60;
+    LogoTransparency = 0.25;
+    LogoHoldTime = 0;
     WatermarkTitle = 'Aurora';
     WatermarkItems = { Title = true, Time = true };
     WatermarkPing = 0;
@@ -184,6 +189,7 @@ local FONT_FOLDER = 'Aurora/fonts';
 local FONT_REF = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
 
 Library.FontName = 'Default';
+Library.DefaultFontName = 'Tahoma 8px';
 Library.FontFace = nil;
 Library.FontScaleX = 1;
 Library.FontScaleY = 1;
@@ -447,6 +453,15 @@ function Library:SetFont(Name)
 
     return true;
 end;
+
+--// The shipped default is a downloaded face, so it is fetched in the background rather than
+--// blocking the library load. Anything built before it lands is repainted by the registry walk
+--// inside SetFont.
+task.spawn(function()
+    if Library.DefaultFontName ~= 'Default' then
+        pcall(Library.SetFont, Library, Library.DefaultFontName);
+    end;
+end);
 
 function Library:Create(Class, Properties)
     local _Instance = Class;
@@ -1220,6 +1235,142 @@ function Library:SetCustomCursorEnabled(Bool)
     Library.CustomCursorEnabled = not not Bool;
     Library:RefreshCustomCursor();
 end;
+
+--// Rotating centre logo. It lives at ZIndex 0 so the window (ZIndex 1) draws over it, which
+--// lets the emblem sit dead centre without ever covering a control. The png is cached on disk
+--// because the cdn link is signed and the signature eventually expires.
+local LOGO_URL = 'https://cdn.discordapp.com/attachments/1511840014089322647/1544386922623795220/5599fab38719bac72db84e9bd699307b.png?ex=6a9851e7&is=6a970067&hm=faaae230dd52f7725a849f9f11cbc93a2ff1c6cfd5a7b034e63b7ca38de7e34e&';
+local LOGO_FILE = 'Aurora/logo.png';
+
+local LogoAsset = nil;
+local LogoTried = false;
+
+local function GetLogoAsset()
+    if LogoAsset or LogoTried then
+        return LogoAsset;
+    end;
+
+    --// One attempt per session; a dead link must not re-download on every menu open.
+    LogoTried = true;
+
+    if not (isfile and writefile and getcustomasset) then
+        return nil;
+    end;
+
+    if not isfile(LOGO_FILE) then
+        if not (isfolder and makefolder) then
+            return nil;
+        end;
+
+        if not isfolder('Aurora') then
+            makefolder('Aurora');
+        end;
+
+        local Ok, Data = pcall(game.HttpGet, game, LOGO_URL);
+
+        if (not Ok) or type(Data) ~= 'string' or #Data < 256 then
+            return nil;
+        end;
+
+        writefile(LOGO_FILE, Data);
+    end;
+
+    local AssetOk, Asset = pcall(getcustomasset, LOGO_FILE);
+
+    if AssetOk then
+        LogoAsset = Asset;
+    end;
+
+    return LogoAsset;
+end
+
+function Library:RefreshLogo()
+    if not Library.LogoEnabled or not Library.IsOpen then
+        if Library._LogoConnection then
+            Library._LogoConnection:Disconnect();
+            Library._LogoConnection = nil;
+        end;
+
+        if Library._Logo then
+            pcall(function() Library._Logo:Destroy(); end);
+            Library._Logo = nil;
+        end;
+
+        return;
+    end;
+
+    if Library._LogoConnection then
+        return;
+    end;
+
+    local Asset = GetLogoAsset();
+
+    if not Asset then
+        return;
+    end;
+
+    local Logo = Library:Create('ImageLabel', {
+        AnchorPoint = Vector2.new(0.5, 0.5);
+        BackgroundTransparency = 1;
+        Image = Asset;
+        ImageTransparency = 1;
+        Position = UDim2.fromScale(0.5, 0.5);
+        Size = UDim2.fromOffset(Library.LogoSize, Library.LogoSize);
+        ZIndex = 0;
+        Parent = ScreenGui;
+    });
+
+    Library._Logo = Logo;
+
+    local Elapsed = 0;
+
+    Library._LogoConnection = RenderStepped:Connect(function(Delta)
+        if not Library.LogoEnabled or not Library.IsOpen or not ScreenGui.Parent then
+            return;
+        end;
+
+        Elapsed = Elapsed + Delta;
+
+        --// Degrees per second off the real frame delta, so the spin is the same speed at 30 and
+        --// at 300 fps.
+        Logo.Rotation = (Elapsed * Library.LogoSpeed) % 360;
+
+        local Alpha = math.clamp(Elapsed / 0.35, 0, 1);
+
+        --// LogoHoldTime 0 keeps it up for as long as the menu is open; anything higher turns it
+        --// into a splash that fades back out once it has had its spin.
+        if Library.LogoHoldTime > 0 and Elapsed > Library.LogoHoldTime then
+            Alpha = math.clamp(1 - (Elapsed - Library.LogoHoldTime) / 0.45, 0, 1);
+        end;
+
+        if Alpha <= 0 then
+            Library._Logo = nil;
+            Library._LogoConnection:Disconnect();
+            Library._LogoConnection = nil;
+
+            pcall(function() Logo:Destroy(); end);
+
+            return;
+        end;
+
+        Logo.ImageTransparency = 1 - (Alpha * (1 - Library.LogoTransparency));
+    end);
+
+    table.insert(Library.Signals, Library._LogoConnection);
+end;
+
+function Library:SetLogoEnabled(Bool)
+    Library.LogoEnabled = not not Bool;
+    Library:RefreshLogo();
+end;
+
+--// Warmed in the background so the first menu open never has to sit through the download, and
+--// so a menu that auto-shows before the png lands still picks it up.
+task.spawn(function()
+    if GetLogoAsset() then
+        pcall(Library.RefreshLogo, Library);
+    end;
+end);
 
 function Library:SetWatermarkItems(Items)
     local Map = {};
@@ -7063,6 +7214,7 @@ function Library:CreateWindow(...)
 
         Library:RefreshWeatherEffect()
         Library:RefreshCustomCursor()
+        Library:RefreshLogo()
     end
 
     if Library.IsMobile then
