@@ -1264,6 +1264,11 @@ local LOGO_FILE = 'Aurora/logo.png';
 
 local PNG_MAGIC = string.char(137, 80, 78, 71, 13, 10, 26, 10);
 
+--// LogoDirect holds anything the engine resolves on its own -- an asset id, rbxassetid://,
+--// rbxthumb:// -- and skips the disk cache entirely. LogoSource is the http link to download when
+--// there is no direct image; SetLogoImage is what moves either off the shipped default.
+local LogoSource = LOGO_URL;
+local LogoDirect = nil;
 local LogoAsset = nil;
 local LogoTried = false;
 
@@ -1272,6 +1277,10 @@ local function IsPng(Data)
 end
 
 local function GetLogoAsset()
+    if LogoDirect then
+        return LogoDirect;
+    end;
+
     if LogoAsset or LogoTried then
         return LogoAsset;
     end;
@@ -1311,7 +1320,7 @@ local function GetLogoAsset()
             makefolder(FONT_ROOT);
         end;
 
-        local Ok, Data = pcall(game.HttpGet, game, LOGO_URL);
+        local Ok, Data = pcall(game.HttpGet, game, LogoSource);
 
         if not (Ok and IsPng(Data)) then
             return nil;
@@ -1391,9 +1400,13 @@ function Library:RefreshLogo()
 
         Elapsed = Elapsed + Delta;
 
-        --// Degrees per second off the real frame delta, so the spin is the same speed at 30 and
+        --// Not a flat spin. Scaling the width by the cosine of the turn angle narrows the emblem
+        --// away to nothing as it comes edge-on and then opens it back out, which is the gif-style
+        --// flip. Degrees per second off the real frame delta, so it turns at the same rate at 30 and
         --// at 300 fps.
-        Logo.Rotation = (Elapsed * Library.LogoSpeed) % 360;
+        local Flip = math.abs(math.cos(math.rad(Elapsed * Library.LogoSpeed)));
+
+        Logo.Size = UDim2.fromOffset(Library.LogoSize * Flip, Library.LogoSize);
 
         local Alpha = math.clamp(Elapsed / 0.35, 0, 1);
 
@@ -1417,6 +1430,52 @@ end;
 
 function Library:SetLogoEnabled(Bool)
     Library.LogoEnabled = not not Bool;
+    Library:RefreshLogo();
+end;
+
+--// Accepts a bare asset id, rbxassetid://123, any other rbx* url, a direct http(s) image link, or
+--// the name of a file already sitting in the executor's workspace folder. An empty value puts the
+--// shipped emblem back.
+function Library:SetLogoImage(Value)
+    LogoDirect = nil;
+    LogoAsset = nil;
+    LogoTried = false;
+
+    --// Dropped on every call rather than only when a link is given: the cache is keyed by file name
+    --// alone, so a download left over from a previous link would be served in place of whatever was
+    --// just asked for -- including when the field is cleared back to the shipped emblem.
+    if isfile and delfile and isfile(LOGO_FILE) then
+        pcall(delfile, LOGO_FILE);
+    end;
+
+    if type(Value) == 'number' then
+        Value = string.format('%d', Value);
+    end;
+
+    Value = type(Value) == 'string' and Value:match('^%s*(.-)%s*$') or '';
+
+    local Id = Value:match('^(%d+)$') or Value:match('^rbxassetid://(%d+)$');
+
+    if Id then
+        LogoDirect = 'rbxassetid://' .. Id;
+    elseif Value:match('^rbx') then
+        LogoDirect = Value;
+    elseif Value:match('^https?://') then
+        --// The engine will not load an arbitrary host, so a link still goes through the download path.
+        LogoSource = Value;
+    elseif Value == '' then
+        LogoSource = LOGO_URL;
+    elseif getcustomasset then
+        local Ok, Asset = pcall(getcustomasset, Value);
+
+        if Ok then
+            LogoDirect = Asset;
+        end;
+    end;
+
+    --// Rebuilt rather than repainted, so a swap while the menu is open restarts the flip from a
+    --// known angle instead of dropping the new image in halfway through the old one's turn.
+    DestroyLogo();
     Library:RefreshLogo();
 end;
 
@@ -2688,6 +2747,27 @@ end;
 
 local BaseGroupbox = {};
 
+--// The stored role name stays 'Priority' -- it is compared by name in the aim paths and written to
+--// configs by UserId, so only the caption on screen changes. A status with no entry here (the page
+--// list's 'LocalPlayer' pseudo-status) falls straight through.
+Library.PriorityLabels = {
+    Priority = 'Number One Focus';
+};
+
+function Library:GetPriorityLabel(Status)
+    return Library.PriorityLabels[Status] or Status;
+end;
+
+function Library:GetPriorityFromLabel(Label)
+    for Status, Caption in next, Library.PriorityLabels do
+        if Caption == Label then
+            return Status;
+        end;
+    end;
+
+    return Label;
+end;
+
 function Library:SetPlayerPriority(Player, Priority)
     local PlayerObject = typeof(Player) == 'Instance' and Player or Players:FindFirstChild(tostring(Player));
     local Key = PlayerObject and tostring(PlayerObject.UserId) or tostring(Player);
@@ -2912,7 +2992,7 @@ do
             for Player, Row in next, PlayerList.Rows do
                 local Status = Library:GetPlayerPriority(Player);
                 Row.NameLabel.TextColor3 = PlayerList.Selected == Player and Library.AccentColor or Library.FontColor;
-                Row.StateLabel.Text = Status;
+                Row.StateLabel.Text = Library:GetPriorityLabel(Status);
                 Row.StateLabel.TextColor3 = StatusColors[Status]();
             end;
         end;
@@ -2935,7 +3015,7 @@ do
                 LayoutOrder = LayoutOrder;
                 Size = UDim2.new(0.25, -3, 1, 0);
                 Font = Library.Font;
-                Text = Status;
+                Text = Library:GetPriorityLabel(Status);
                 TextColor3 = StatusColors[Status]();
                 TextSize = 10;
                 ZIndex = 7;
@@ -2988,7 +3068,7 @@ do
             local StateLabel = Library:CreateLabel({
                 Position = UDim2.new(0.58, 0, 0, 0);
                 Size = UDim2.new(0.42, -4, 1, 0);
-                Text = Status;
+                Text = Library:GetPriorityLabel(Status);
                 TextColor3 = StatusColors[Status]();
                 TextSize = 10;
                 TextXAlignment = Enum.TextXAlignment.Right;
@@ -6643,7 +6723,7 @@ function Library:CreateWindow(...)
                     local Status = GetStatus(Player);
                     Row.Button.BackgroundColor3 = PlayerList.Selected == Player and Library:GetDarkerColor(Library.MainColor) or Library.BackgroundColor;
                     Row.NameLabel.TextColor3 = PlayerList.Selected == Player and Library.AccentColor or Library.FontColor;
-                    Row.StatusLabel.Text = Status;
+                    Row.StatusLabel.Text = Library:GetPriorityLabel(Status);
                     Row.StatusLabel.TextColor3 = StatusColors[Status]();
                 end;
 
@@ -6660,9 +6740,11 @@ function Library:CreateWindow(...)
                 DetailsText.Text = string.format('Name: %s\nDisplayName: %s\nUserId: %s', Player.Name, Player.DisplayName, tostring(Player.UserId));
                 PriorityLabel.Visible = Player ~= LocalPlayer;
                 PriorityContainer.Visible = Player ~= LocalPlayer;
-                if Player ~= LocalPlayer and PriorityDropdown and PriorityDropdown.Value ~= Status then
+                local Caption = Library:GetPriorityLabel(Status);
+
+                if Player ~= LocalPlayer and PriorityDropdown and PriorityDropdown.Value ~= Caption then
                     UpdatingPriorityDropdown = true;
-                    PriorityDropdown:SetValue(Status);
+                    PriorityDropdown:SetValue(Caption);
                     UpdatingPriorityDropdown = false;
                 end;
                 Avatar.Image = '';
@@ -6691,13 +6773,21 @@ function Library:CreateWindow(...)
                 Resize = function() end;
             };
             setmetatable(PriorityGroupbox, BaseGroupbox);
+            --// The dropdown carries captions while everything downstream stores role names, so the
+            --// selection is translated back on the way out.
+            local PriorityValues = {};
+
+            for _, Status in ipairs({ 'Neutral', 'Friendly', 'Enemy', 'Priority' }) do
+                table.insert(PriorityValues, Library:GetPriorityLabel(Status));
+            end;
+
             PriorityDropdown = PriorityGroupbox:AddDropdown(Idx .. '_Priority', {
-                Values = { 'Neutral', 'Friendly', 'Enemy', 'Priority' };
-                Default = 'Neutral';
+                Values = PriorityValues;
+                Default = Library:GetPriorityLabel('Neutral');
                 BlankSize = 0;
-                Callback = function(Status)
+                Callback = function(Caption)
                     if not UpdatingPriorityDropdown then
-                        SetStatus(Status);
+                        SetStatus(Library:GetPriorityFromLabel(Caption));
                     end;
                 end;
             });
@@ -6744,7 +6834,7 @@ function Library:CreateWindow(...)
                 local StatusLabel = Library:CreateLabel({
                     Position = UDim2.fromScale(0.72, 0);
                     Size = UDim2.new(0.28, -8, 1, 0);
-                    Text = Status;
+                    Text = Library:GetPriorityLabel(Status);
                     TextColor3 = StatusColors[Status]();
                     TextSize = 10;
                     TextXAlignment = Enum.TextXAlignment.Right;
