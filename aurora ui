@@ -64,9 +64,9 @@ local Library = {
     BlurSize = 0;
     CustomCursorEnabled = true;
     LogoEnabled = true;
-    LogoSize = 420;
+    LogoSize = 560;
     LogoSpeed = 60;
-    LogoTransparency = 0.25;
+    LogoTransparency = 0.8;
     LogoHoldTime = 0;
     WatermarkTitle = 'Aurora';
     WatermarkItems = { Title = true, Time = true };
@@ -188,7 +188,7 @@ local FONT_ROOT = 'Aurora';
 local FONT_FOLDER = 'Aurora/fonts';
 local FONT_REF = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
 
-Library.FontName = 'Default';
+Library.FontName = 'Arial';
 Library.DefaultFontName = 'Tahoma 8px';
 Library.FontFace = nil;
 Library.FontScaleX = 1;
@@ -196,10 +196,10 @@ Library.FontScaleY = 1;
 Library.LoadedFonts = {};
 Library.FontObjects = setmetatable({}, { __mode = 'k' });
 
---// 'Default' is the built-in Enum and downloads nothing; every other entry is a file name
---// under FONT_BASE.
+--// Arial is the built-in Enum that Library.Font already holds, so it downloads nothing; every
+--// other entry is a file name under FONT_BASE.
 Library.Fonts = {
-    { Name = 'Default' };
+    { Name = 'Arial' };
     { Name = 'Comfortaa', File = 'Comfortaa-Regular.ttf' };
     { Name = 'Hanken Grotesk', File = 'HankenGrotesk-SemiBold.ttf' };
     { Name = 'Inter Medium', File = 'Inter_28pt-Medium.ttf' };
@@ -458,7 +458,9 @@ end;
 --// blocking the library load. Anything built before it lands is repainted by the registry walk
 --// inside SetFont.
 task.spawn(function()
-    if Library.DefaultFontName ~= 'Default' then
+    local Entry = Library:GetFontEntry(Library.DefaultFontName);
+
+    if Entry and Entry.File then
         pcall(Library.SetFont, Library, Library.DefaultFontName);
     end;
 end);
@@ -751,6 +753,22 @@ function Library:GetPointerPosition(Input)
     end;
 
     return Mouse.X, Mouse.Y;
+end;
+
+--// Every opened list, picker and mode select is parented to the ScreenGui rather than to the
+--// window, so hiding the window on its own leaves them floating over the game. Where the owner
+--// handed over a closer it is stored as the OpenedFrames value, so state like suspended dragging
+--// or a captured search box unwinds instead of the frame just going invisible.
+function Library:CloseOpenedFrames()
+    for Frame, Closer in next, Library.OpenedFrames do
+        Library.OpenedFrames[Frame] = nil;
+
+        if type(Closer) == 'function' then
+            pcall(Closer);
+        else
+            Frame.Visible = false;
+        end;
+    end;
 end;
 
 function Library:MouseIsOverOpenedFrame(Input)
@@ -1236,14 +1254,22 @@ function Library:SetCustomCursorEnabled(Bool)
     Library:RefreshCustomCursor();
 end;
 
---// Rotating centre logo. It lives at ZIndex 0 so the window (ZIndex 1) draws over it, which
---// lets the emblem sit dead centre without ever covering a control. The png is cached on disk
---// because the cdn link is signed and the signature eventually expires.
+--// Rotating centre logo. The ScreenGui is on Global ZIndexBehavior and the window is centred
+--// and opaque, so anything drawn under it at dead centre is invisible no matter how large it is;
+--// the emblem therefore sits above the window chrome (which tops out at 204) but below the drag
+--// preview at 1000 and the cursor. LogoTransparency is what keeps the menu readable through it.
+--// The png is cached on disk because the cdn link is signed and the signature eventually expires.
 local LOGO_URL = 'https://cdn.discordapp.com/attachments/1511840014089322647/1544386922623795220/5599fab38719bac72db84e9bd699307b.png?ex=6a9851e7&is=6a970067&hm=faaae230dd52f7725a849f9f11cbc93a2ff1c6cfd5a7b034e63b7ca38de7e34e&';
 local LOGO_FILE = 'Aurora/logo.png';
 
+local PNG_MAGIC = string.char(137, 80, 78, 71, 13, 10, 26, 10);
+
 local LogoAsset = nil;
 local LogoTried = false;
+
+local function IsPng(Data)
+    return type(Data) == 'string' and #Data > 256 and Data:sub(1, 8) == PNG_MAGIC;
+end
 
 local function GetLogoAsset()
     if LogoAsset or LogoTried then
@@ -1257,18 +1283,37 @@ local function GetLogoAsset()
         return nil;
     end;
 
-    if not isfile(LOGO_FILE) then
+    --// An expired signature answers with an error page, not an image, so the bytes are checked
+    --// before they are trusted. Without this a single bad fetch gets written to disk and the logo
+    --// stays broken for every later session even once the link is fixed.
+    local Cached = false;
+
+    if isfile(LOGO_FILE) then
+        if readfile then
+            local ReadOk, Existing = pcall(readfile, LOGO_FILE);
+
+            Cached = ReadOk and IsPng(Existing);
+
+            if (not Cached) and delfile then
+                pcall(delfile, LOGO_FILE);
+            end;
+        else
+            Cached = true;
+        end;
+    end;
+
+    if not Cached then
         if not (isfolder and makefolder) then
             return nil;
         end;
 
-        if not isfolder('Aurora') then
-            makefolder('Aurora');
+        if not isfolder(FONT_ROOT) then
+            makefolder(FONT_ROOT);
         end;
 
         local Ok, Data = pcall(game.HttpGet, game, LOGO_URL);
 
-        if (not Ok) or type(Data) ~= 'string' or #Data < 256 then
+        if not (Ok and IsPng(Data)) then
             return nil;
         end;
 
@@ -1284,17 +1329,32 @@ local function GetLogoAsset()
     return LogoAsset;
 end
 
+--// Shared by the close path and by the hold-time fade, so neither one leaves a dead entry
+--// behind in Library.Signals when the menu is opened and closed repeatedly.
+local function DestroyLogo()
+    local Connection = Library._LogoConnection;
+
+    if Connection then
+        Connection:Disconnect();
+        Library._LogoConnection = nil;
+
+        for Idx, Signal in next, Library.Signals do
+            if Signal == Connection then
+                table.remove(Library.Signals, Idx);
+                break;
+            end;
+        end;
+    end;
+
+    if Library._Logo then
+        pcall(function() Library._Logo:Destroy(); end);
+        Library._Logo = nil;
+    end;
+end
+
 function Library:RefreshLogo()
     if not Library.LogoEnabled or not Library.IsOpen then
-        if Library._LogoConnection then
-            Library._LogoConnection:Disconnect();
-            Library._LogoConnection = nil;
-        end;
-
-        if Library._Logo then
-            pcall(function() Library._Logo:Destroy(); end);
-            Library._Logo = nil;
-        end;
+        DestroyLogo();
 
         return;
     end;
@@ -1316,7 +1376,7 @@ function Library:RefreshLogo()
         ImageTransparency = 1;
         Position = UDim2.fromScale(0.5, 0.5);
         Size = UDim2.fromOffset(Library.LogoSize, Library.LogoSize);
-        ZIndex = 0;
+        ZIndex = 950;
         Parent = ScreenGui;
     });
 
@@ -1344,11 +1404,7 @@ function Library:RefreshLogo()
         end;
 
         if Alpha <= 0 then
-            Library._Logo = nil;
-            Library._LogoConnection:Disconnect();
-            Library._LogoConnection = nil;
-
-            pcall(function() Logo:Destroy(); end);
+            DestroyLogo();
 
             return;
         end;
@@ -1908,7 +1964,7 @@ do
             end;
 
             PickerFrameOuter.Visible = true;
-            Library.OpenedFrames[PickerFrameOuter] = true;
+            Library.OpenedFrames[PickerFrameOuter] = function() ColorPicker:Hide(); end;
             Library:SuspendDragging();
         end;
 
@@ -2305,7 +2361,7 @@ do
                 end;
 
                 ModeSelectOuter.Visible = true;
-                Library.OpenedFrames[ModeSelectOuter] = true;
+                Library.OpenedFrames[ModeSelectOuter] = function() SetModeSelectVisible(false); end;
                 Library:SuspendDragging();
             else
                 ModeSelectOuter.Visible = false;
@@ -4283,7 +4339,7 @@ do
         function Dropdown:OpenDropdown()
             Library:SuspendDragging();
             ListOuter.Visible = true;
-            Library.OpenedFrames[ListOuter] = true;
+            Library.OpenedFrames[ListOuter] = function() Dropdown:CloseDropdown(); end;
         end;
 
         function Dropdown:CloseDropdown()
@@ -4893,7 +4949,7 @@ do
         function Dropdown:OpenDropdown()
             Library:SuspendDragging();
             ListOuter.Visible = true;
-            Library.OpenedFrames[ListOuter] = true;
+            Library.OpenedFrames[ListOuter] = function() Dropdown:CloseDropdown(); end;
 
             --// Straight into typing, no second click on the search box first. Not on mobile
             --// though, where the on screen keyboard would cover the list being filtered.
@@ -7203,6 +7259,10 @@ function Library:CreateWindow(...)
         Library.IsOpen = Toggled;
         ModalElement.Modal = Toggled;
         Outer.Visible = Toggled;
+
+        if not Toggled then
+            Library:CloseOpenedFrames();
+        end;
         if Library.ESPPreview then
             Library.ESPPreview.Visible = Library.ESPPreviewEnabled and Toggled;
         end;
