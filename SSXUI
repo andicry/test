@@ -57,9 +57,22 @@ pcall(function()
 	fonts.main = Font.new(MontserratFont, Enum.FontWeight.Regular, Enum.FontStyle.Normal)
 end)
 
--- Fallback font if custom font fails
+-- Fallback font if custom font fails. Font.new takes a STRING family path,
+-- never an EnumItem ("string expected, got EnumItem").
+local function SafeFont(Family, Weight, Style)
+	local Ok, Result = pcall(Font.new, Family, Weight, Style)
+
+	if Ok and Result then
+		return Result
+	end
+
+	return nil
+end
+
 if not fonts.main then
-	fonts.main = Font.new(Enum.Font.Gotham, Enum.FontWeight.Regular, Enum.FontStyle.Normal)
+	fonts.main = SafeFont("rbxasset://fonts/families/GothamSSm.json", Enum.FontWeight.Regular, Enum.FontStyle.Normal)
+		or SafeFont("rbxasset://fonts/families/SourceSansPro.json", Enum.FontWeight.Regular, Enum.FontStyle.Normal)
+		or SafeFont("", Enum.FontWeight.Regular, Enum.FontStyle.Normal)
 end
 
 -- ============================================================
@@ -102,10 +115,17 @@ local LINE2 = 0.915
 local HAIR = 0.97
 
 local FONT = {
-	Regular = fonts.main or Font.new(Enum.Font.Gotham, Enum.FontWeight.Regular),
-	Medium = fonts.main or Font.new(Enum.Font.Gotham, Enum.FontWeight.Medium),
-	Bold = fonts.main or Font.new(Enum.Font.Gotham, Enum.FontWeight.Bold),
-	Mono = Font.new(Enum.Font.RobotoMono),
+	Regular = fonts.main
+		or SafeFont("rbxasset://fonts/families/GothamSSm.json", Enum.FontWeight.Regular, Enum.FontStyle.Normal)
+		or SafeFont("", Enum.FontWeight.Regular, Enum.FontStyle.Normal),
+	Medium = fonts.main
+		or SafeFont("rbxasset://fonts/families/GothamSSm.json", Enum.FontWeight.Medium, Enum.FontStyle.Normal)
+		or SafeFont("", Enum.FontWeight.Medium, Enum.FontStyle.Normal),
+	Bold = fonts.main
+		or SafeFont("rbxasset://fonts/families/GothamSSm.json", Enum.FontWeight.Bold, Enum.FontStyle.Normal)
+		or SafeFont("", Enum.FontWeight.Bold, Enum.FontStyle.Normal),
+	Mono = SafeFont("rbxasset://fonts/families/RobotoMono.json", Enum.FontWeight.Medium, Enum.FontStyle.Normal)
+		or SafeFont("", Enum.FontWeight.Medium, Enum.FontStyle.Normal),
 }
 
 local ICONS = {
@@ -176,7 +196,13 @@ local function New(Class, Props, Children)
 	if Props then
 		for Key, Value in next, Props do
 			if Key ~= "Parent" then
-				Inst[Key] = Value
+				-- Font OBJECTS go to .FontFace (`.Font` only accepts EnumItem/string:
+				-- "Unable to assign property Font. EnumItem, number, or string expected, got Font")
+				if Key == "Font" and typeof(Value) == "Font" then
+					Inst.FontFace = Value
+				else
+					Inst[Key] = Value
+				end
 			end
 		end
 	end
@@ -2259,7 +2285,7 @@ local function MakeSelect(Parent, Node)
 
 		for _, Option in next, Options do
 			local Ok, Size = pcall(function()
-				return TextService:GetTextSize(tostring(Option), 12, FONT.Medium, Vector2.new(400, 20)).X
+				return TextService:GetTextSize(tostring(Option), 12, Enum.Font.GothamMedium, Vector2.new(400, 20)).X
 			end)
 
 			if not Ok then
