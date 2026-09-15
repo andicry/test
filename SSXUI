@@ -21,6 +21,55 @@ end
 
 SSX.Version = "3.2.3"
 
+-- ============================================================
+-- Font Loading System
+-- ============================================================
+local fonts = {}
+local function RegisterFont(Name, Weight, Style, Asset)
+	if not isfile(Asset.Id) then
+		writefile(Asset.Id, Asset.Font)
+	end
+
+	if isfile(Name .. ".font") then
+		delfile(Name .. ".font")
+	end
+
+	local Data = {
+		name = Name,
+		faces = {
+			{
+				name = "Normal",
+				weight = Weight,
+				style = Style,
+				assetId = getcustomasset(Asset.Id),
+			},
+		},
+	}
+	writefile(Name .. ".font", HttpService:JSONEncode(Data))
+	return getcustomasset(Name .. ".font")
+end
+
+pcall(function()
+	local MontserratFont = RegisterFont("SSXMontserrat", 100, "Normal", {
+		Id = "SSXMontserrat.ttf",
+		Font = game:HttpGet("https://github.com/andicry/test/raw/refs/heads/main/fonts/Montserrat-Italic-VariableFont_wght.ttf"),
+	})
+	fonts.main = Font.new(MontserratFont, Enum.FontWeight.Regular, Enum.FontStyle.Normal)
+end)
+
+-- Fallback font if custom font fails
+if not fonts.main then
+	fonts.main = Font.new(Enum.Font.Gotham, Enum.FontWeight.Regular, Enum.FontStyle.Normal)
+end
+
+-- ============================================================
+-- Lucide Icons Loading
+-- ============================================================
+local icons = {}
+pcall(function()
+	icons = loadstring(game:HttpGet('https://raw.githubusercontent.com/Footagesus/Icons/main/lucide/dist/Icons.lua'))()
+end)
+
 local GLOW_ASSET = "rbxassetid://18245826428"
 local GLOW_SLICE = Rect.new(Vector2.new(21, 21), Vector2.new(79, 79))
 
@@ -53,10 +102,10 @@ local LINE2 = 0.915
 local HAIR = 0.97
 
 local FONT = {
-	Regular = Enum.Font.Gotham,
-	Medium = Enum.Font.GothamMedium,
-	Bold = Enum.Font.GothamBold,
-	Mono = Enum.Font.Code,
+	Regular = fonts.main or Font.new(Enum.Font.Gotham, Enum.FontWeight.Regular),
+	Medium = fonts.main or Font.new(Enum.Font.Gotham, Enum.FontWeight.Medium),
+	Bold = fonts.main or Font.new(Enum.Font.Gotham, Enum.FontWeight.Bold),
+	Mono = Font.new(Enum.Font.RobotoMono),
 }
 
 local ICONS = {
@@ -327,19 +376,33 @@ local function Cap(Text)
 end
 
 local function Icon(Parent, Name, Size, Color, Transparency, Order)
+	-- Try Lucide icons first, fallback to ICONS table
+	local LucideIcon = icons[Name]
 	local Id = ICONS[Name]
-
-	return New("ImageLabel", {
-		Name = "Icon",
-		Parent = Parent,
-		BackgroundTransparency = 1,
-		BorderSizePixel = 0,
-		Image = Id and ("rbxassetid://" .. Id) or "",
-		ImageColor3 = Color or C.Text3,
-		ImageTransparency = Transparency or 0,
-		Size = UDim2.new(0, Size or 14, 0, Size or 14),
-		LayoutOrder = Order or 0,
-	})
+	
+	if LucideIcon then
+		-- Use Lucide icon system
+		return LucideIcon({
+			Parent = Parent,
+			Size = Size or 14,
+			Color = Color or C.Text3,
+			Transparency = Transparency or 0,
+			LayoutOrder = Order or 0,
+		})
+	else
+		-- Fallback to ImageLabel
+		return New("ImageLabel", {
+			Name = "Icon",
+			Parent = Parent,
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			Image = Id and ("rbxassetid://" .. Id) or "",
+			ImageColor3 = Color or C.Text3,
+			ImageTransparency = Transparency or 0,
+			Size = UDim2.new(0, Size or 14, 0, Size or 14),
+			LayoutOrder = Order or 0,
+		})
+	end
 end
 
 local KEY_LABELS = {
@@ -564,7 +627,7 @@ local function ClosePopup()
 	local Frame = Popup.Frame
 	local Blocker = Popup.Blocker
 
-	Tween(Frame, 0.14, { GroupTransparency = 1 })
+	Tween(Frame, 0.14, { BackgroundTransparency = 1 })
 
 	task.delay(0.15, function()
 		if Frame then
@@ -595,7 +658,7 @@ local function ShowPopup(Layer, Anchor, Frame, Options)
 
 	Frame.ZIndex = Layer.ZIndex + 2
 	Frame.Parent = Layer
-	Frame.GroupTransparency = 1
+	Frame.BackgroundTransparency = 1
 
 	local AnchorPos = Anchor.AbsolutePosition - Layer.AbsolutePosition
 	local Width = Frame.AbsoluteSize.X
@@ -631,8 +694,8 @@ local function ShowPopup(Layer, Anchor, Frame, Options)
 		Frame.Position = UDim2.new(0, Left, 0, Top + Height)
 	end
 
-	Frame.GroupTransparency = 0.35
-	Tween(Frame, 0.18, { GroupTransparency = 0 })
+	Frame.BackgroundTransparency = 0.35
+	Tween(Frame, 0.18, { BackgroundTransparency = 0 })
 
 	Blocker.MouseButton1Click:Connect(function()
 		ClosePopup()
@@ -710,7 +773,7 @@ local function Notify(Text, Duration, Accent)
 		BorderSizePixel = 0,
 		AutomaticSize = Enum.AutomaticSize.X,
 		Size = UDim2.new(0, 0, 0, 32),
-		GroupTransparency = 1,
+		BackgroundTransparency = 1,
 		ClipsDescendants = true,
 	})
 
@@ -757,14 +820,14 @@ local function Notify(Text, Duration, Accent)
 		Padding.PaddingBottom = UDim.new(0, 8)
 	end
 
-	Tween(Toast, 0.26, { GroupTransparency = 0 })
+	Tween(Toast, 0.26, { BackgroundTransparency = 0 })
 
 	task.delay(Duration or 1.9, function()
 		if not Toast.Parent then
 			return
 		end
 
-		Tween(Toast, 0.22, { GroupTransparency = 1 })
+		Tween(Toast, 0.22, { BackgroundTransparency = 1 })
 
 		task.delay(0.24, function()
 			Toast:Destroy()
@@ -1062,21 +1125,6 @@ function SSX:CreateWindow(Options)
 
 	Win.Root = Root
 
-	local Stage = New("Frame", {
-		Name = "Stage",
-		Parent = Root,
-		BackgroundColor3 = C.Bg,
-		BorderSizePixel = 0,
-		Size = UDim2.new(1, 0, 1, 0),
-		ZIndex = 0,
-	})
-
-	Win.Stage = Stage
-
-	Win.GlowA = Glow(Stage, 560, UDim2.new(0, -160, 0, -200), Color3.fromRGB(91, 141, 239), 0.83)
-	Win.GlowB = Glow(Stage, 460, UDim2.new(1, -320, 1, -240), Color3.fromRGB(139, 92, 246), 0.83)
-	Win.GlowC = Glow(Stage, 300, UDim2.new(1, -360, 0, -160), Color3.fromRGB(34, 211, 238), 0.91)
-
 	local Wrap = New("Frame", {
 		Name = "Window",
 		Parent = Root,
@@ -1114,22 +1162,7 @@ function SSX:CreateWindow(Options)
 		workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(AutoScale)
 	end
 
-	local Shadow = New("ImageLabel", {
-		Name = "Shadow",
-		Parent = Wrap,
-		BackgroundTransparency = 1,
-		BorderSizePixel = 0,
-		Image = GLOW_ASSET,
-		ImageColor3 = C.Black,
-		ImageTransparency = 0.42,
-		ScaleType = Enum.ScaleType.Slice,
-		SliceCenter = GLOW_SLICE,
-		Position = UDim2.new(0, -40, 0, -40),
-		Size = UDim2.new(1, 80, 1, 80),
-		ZIndex = 1,
-	})
-
-	Win.Shadow = Shadow
+	-- Shadow removed to eliminate black background around UI
 
 	local Frame = New("Frame", {
 		Name = "Surface",
@@ -1419,7 +1452,7 @@ function SSX:CreateWindow(Options)
 		Color = ColorSequence.new(C.White),
 		Transparency = NumberSequence.new({
 			NumberSequenceKeypoint.new(0, 0.988),
-			NumberSequenceKeypoint.new(0.6, 1),
+			NumberSequenceKeypoint.new(1, 1),
 		}),
 	})
 
@@ -1577,7 +1610,7 @@ function SSX:CreateWindow(Options)
 		Position = UDim2.new(0.5, 0, 0.5, 0),
 		Size = UDim2.new(0, 172, 0, 44),
 		Visible = false,
-		GroupTransparency = 1,
+		BackgroundTransparency = 1,
 		ZIndex = 4,
 	})
 
@@ -1635,7 +1668,7 @@ function SSX:CreateWindow(Options)
 		BorderSizePixel = 0,
 		Size = UDim2.new(1, 0, 1, 0),
 		Visible = false,
-		GroupTransparency = 1,
+		BackgroundTransparency = 1,
 		ZIndex = 60,
 	})
 
@@ -2090,7 +2123,7 @@ local function MakeSlider(Parent, Node)
 
 	if Node.Disabled then
 		Track.Active = false
-		Row.GroupTransparency = 0.55
+		Row.BackgroundTransparency = 0.55
 	end
 
 	local function Format(Number)
@@ -2225,7 +2258,13 @@ local function MakeSelect(Parent, Node)
 		local Longest = 0
 
 		for _, Option in next, Options do
-			local Size = TextService:GetTextSize(tostring(Option), 12, FONT.Medium, Vector2.new(400, 20)).X
+			local Ok, Size = pcall(function()
+				return TextService:GetTextSize(tostring(Option), 12, FONT.Medium, Vector2.new(400, 20)).X
+			end)
+
+			if not Ok then
+				Size = #tostring(Option) * 7
+			end
 
 			if Size > Longest then
 				Longest = Size
@@ -3047,17 +3086,7 @@ function WindowMethods:SetTheme(Id)
 		self.AvaGradient.Color = ColorSequence.new(Colors[1], Colors[2])
 	end
 
-	if self.GlowA then
-		self.GlowA.ImageColor3 = Colors[1]
-	end
-
-	if self.GlowB then
-		self.GlowB.ImageColor3 = Colors[2]
-	end
-
-	if self.GlowC then
-		self.GlowC.ImageColor3 = Colors[3]
-	end
+	-- Glow elements removed
 
 	local Letter = Theme.Name:sub(1, 1):upper()
 
@@ -3139,11 +3168,11 @@ function WindowMethods:SetVisible(State)
 	if self.Open then
 		self.Wrap.Visible = true
 		self.Handle.Visible = true
-		Tween(self.Wrap, 0.3, { GroupTransparency = 0 })
+		Tween(self.Wrap, 0.3, { BackgroundTransparency = 0 })
 		Tween(self.Wrap, 0.3, { Position = self.RestorePosition or self.HomePosition })
-		Tween(self.Handle, 0.28, { GroupTransparency = 0 })
+		Tween(self.Handle, 0.28, { BackgroundTransparency = 0 })
 		self.Reopen.Visible = false
-		self.Reopen.GroupTransparency = 1
+		self.Reopen.BackgroundTransparency = 1
 		task.delay(0.3, function()
 			if self.Open then
 				self:UpdateScrollbar()
@@ -3152,11 +3181,11 @@ function WindowMethods:SetVisible(State)
 	else
 		ClosePopup()
 		self.RestorePosition = self.Wrap.Position
-		Tween(self.Wrap, 0.26, { GroupTransparency = 1 })
+		Tween(self.Wrap, 0.26, { BackgroundTransparency = 1 })
 		Tween(self.Wrap, 0.26, { Position = self.RestorePosition + UDim2.new(0, 0, 0, 10) })
-		Tween(self.Handle, 0.24, { GroupTransparency = 1 })
+		Tween(self.Handle, 0.24, { BackgroundTransparency = 1 })
 		self.Reopen.Visible = true
-		Tween(self.Reopen, 0.3, { GroupTransparency = 0 })
+		Tween(self.Reopen, 0.3, { BackgroundTransparency = 0 })
 
 		task.delay(0.28, function()
 			if not self.Open then
@@ -3197,8 +3226,8 @@ function WindowMethods:Show(ViewId)
 			View.Scroll.Visible = On
 
 			if On then
-				View.Scroll.GroupTransparency = 1
-				Tween(View.Scroll, 0.22, { GroupTransparency = 0 })
+				View.Scroll.BackgroundTransparency = 1
+				Tween(View.Scroll, 0.22, { BackgroundTransparency = 0 })
 			end
 		end
 	end
@@ -3520,7 +3549,7 @@ local function MakeGroup(Parent, Open)
 	end
 
 	function Api:SetDimmed(Value)
-		Tween(Group, 0.22, { GroupTransparency = Value and 0.5 or 0 })
+		Tween(Group, 0.22, { BackgroundTransparency = Value and 0.5 or 0 })
 	end
 
 	return Api
@@ -3667,7 +3696,7 @@ local function RenderNodes(Win, Parent, Nodes, Depth, Section)
 			end
 
 			if Node.dis then
-				Row.GroupTransparency = 0.55
+				Row.BackgroundTransparency = 0.55
 			end
 		elseif Node.t == "check" then
 			local Wrapper = New("Frame", {
@@ -3748,7 +3777,7 @@ local function RenderNodes(Win, Parent, Nodes, Depth, Section)
 			end
 
 			if Node.dis then
-				Wrapper.GroupTransparency = 0.55
+				Wrapper.BackgroundTransparency = 0.55
 			end
 		elseif Node.t == "row" then
 			local Row, Left, Right = MakeRowShell(Container, 28, Order)
@@ -3833,7 +3862,7 @@ local function RenderNodes(Win, Parent, Nodes, Depth, Section)
 			end
 
 			if Node.dis then
-				Row.GroupTransparency = 0.55
+				Row.BackgroundTransparency = 0.55
 			end
 		elseif Node.t == "button" then
 			local Row = New("Frame", {
@@ -4294,7 +4323,7 @@ function WindowMethods:BuildSection(Spec, TabId, Index)
 	end
 
 	function Section:SetEnabled(Value)
-		Tween(Frame, 0.22, { GroupTransparency = Value and 0 or 0.55 })
+		Tween(Frame, 0.22, { BackgroundTransparency = Value and 0 or 0.55 })
 	end
 
 	return Section
@@ -4462,7 +4491,7 @@ function WindowMethods:AddPanel(Spec)
 		return Button
 	end
 
-	function Panel:AddKeybindRow(Label, Key, Default)
+	function Panel:AddKeybindRow(Label, Key, Default, Callback)
 		local Row = New("Frame", {
 			Name = "KeybindRow",
 			Parent = View.Content,
@@ -4503,6 +4532,16 @@ function WindowMethods:AddPanel(Spec)
 		Bind.Object.Position = UDim2.new(1, -12, 0.5, 0)
 
 		Owner.Flags[Key] = Default or "Unbound"
+
+		if Callback then
+			UserInputService.InputBegan:Connect(function(Input)
+				if typeof(Input.KeyCode) == "EnumItem" and Input.KeyCode ~= Enum.KeyCode.Unknown then
+					if KeyLabel(Input.KeyCode) == Owner.Flags[Key] and not SSX.IsRecording() then
+						Callback(KeyLabel(Input.KeyCode))
+					end
+				end
+			end)
+		end
 
 		return Bind
 	end
@@ -4953,14 +4992,14 @@ end
 
 function WindowMethods:OpenImport()
 	self.Modal.Visible = true
-	Tween(self.Modal, 0.2, { GroupTransparency = 0 })
+	Tween(self.Modal, 0.2, { BackgroundTransparency = 0 })
 	task.delay(0.12, function()
 		self.ImportBox:CaptureFocus()
 	end)
 end
 
 function WindowMethods:CloseImport()
-	Tween(self.Modal, 0.2, { GroupTransparency = 1 })
+	Tween(self.Modal, 0.2, { BackgroundTransparency = 1 })
 	task.delay(0.22, function()
 		self.Modal.Visible = false
 	end)
