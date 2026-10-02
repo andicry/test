@@ -1,12 +1,9 @@
-
-
 local httpService = game:GetService('HttpService')
 
 local ThemeManager = {} do
     ThemeManager.Folder = 'LinoraSettings'
     ThemeManager.Library = nil
     ThemeManager.DefaultTheme = 'Primordial'
-
 
     ThemeManager.BuiltInThemes = {
         ['Primordial']   = { 1, httpService:JSONDecode('{"FontColor":"ffffff","MainColor":"171717","AccentColor":"c2919c","BackgroundColor":"1c1c1c","OutlineColor":"323232"}') },
@@ -33,6 +30,14 @@ local ThemeManager = {} do
         ['Greyrat']      = { 22, httpService:JSONDecode('{"MainColor":"363636","AccentColor":"4f4f4f","OutlineColor":"444444","BackgroundColor":"292929","FontColor":"ffffff"}') },
         ['Karuta']       = { 23, httpService:JSONDecode('{"FontColor":"ffffff","MainColor":"1c1c1c","AccentColor":"ff912b","BackgroundColor":"141414","OutlineColor":"323232"}') },
         ['Villan']       = { 24, httpService:JSONDecode('{"MainColor":"221a27","AccentColor":"423149","OutlineColor":"3a2d40","BackgroundColor":"211824","FontColor":"ffffff"}') },
+        ['Gamesense']    = { 25, httpService:JSONDecode('{"FontColor":"ffffff","MainColor":"111111","AccentColor":"97cf3c","BackgroundColor":"151515","OutlineColor":"252525"}') },
+        ['Neverlose']    = { 26, httpService:JSONDecode('{"FontColor":"ffffff","MainColor":"080d15","AccentColor":"00aeff","BackgroundColor":"05080d","OutlineColor":"1c293a"}') },
+        ['Onetap']       = { 27, httpService:JSONDecode('{"FontColor":"ffffff","MainColor":"1c1b22","AccentColor":"e2a03d","BackgroundColor":"131217","OutlineColor":"2c2a35"}') },
+        ['Aimware']      = { 28, httpService:JSONDecode('{"FontColor":"ffffff","MainColor":"1b1b1b","AccentColor":"e03131","BackgroundColor":"121212","OutlineColor":"2e2e2e"}') },
+        ['Vape V4']      = { 29, httpService:JSONDecode('{"FontColor":"ffffff","MainColor":"161616","AccentColor":"ff355e","BackgroundColor":"101010","OutlineColor":"262626"}') },
+        ['Dracula']      = { 30, httpService:JSONDecode('{"FontColor":"f8f8f2","MainColor":"282a36","AccentColor":"bd93f9","BackgroundColor":"1e1f29","OutlineColor":"444444"}') },
+        ['Nord']         = { 31, httpService:JSONDecode('{"FontColor":"eceff4","MainColor":"2e3440","AccentColor":"88c0d0","BackgroundColor":"242933","OutlineColor":"3b4252"}') },
+        ['Cyberpunk']    = { 32, httpService:JSONDecode('{"FontColor":"00f0ff","MainColor":"121015","AccentColor":"f3e600","BackgroundColor":"08070a","OutlineColor":"2a2438"}') }
     }
 
     function ThemeManager:ApplyTheme(theme)
@@ -41,7 +46,6 @@ local ThemeManager = {} do
 
         if not data then return end
 
-        -- custom themes are just the .. table, built in themes are an array
         local scheme = data.objects or data[2]
         for idx, col in next, customThemeData or scheme do
             self.Library[idx] = Color3.fromHex(col)
@@ -55,7 +59,6 @@ local ThemeManager = {} do
     end
 
     function ThemeManager:ThemeUpdate()
-        -- This allows us to force apply the current theme
         local options = { "FontColor", "MainColor", "AccentColor", "BackgroundColor", "OutlineColor" }
         for i, field in next, options do
             if self.Library.Options and self.Library.Options[field] then
@@ -223,8 +226,6 @@ local ThemeManager = {} do
         for i = 1, #list do
             local file = list[i]
             if file:sub(-4) == '.txt' then
-                -- i hate this but it has to be done ...
-
                 local pos = file:find('.txt', 1, true)
                 local char = file:sub(pos, pos)
 
@@ -250,9 +251,6 @@ local ThemeManager = {} do
     function ThemeManager:BuildFolderTree()
         local paths = {}
 
-        -- build the entire tree if a path is like some-hub/settings
-        -- makefolder builds the entire tree on Synapse X but not other exploits
-
         local parts = self.Folder:split('/')
         for idx = 1, #parts do
             paths[#paths + 1] = table.concat(parts, '/', 1, idx)
@@ -276,7 +274,6 @@ local ThemeManager = {} do
 
     function ThemeManager:CreateGroupBox(tab)
         assert(self.Library, 'Must set ThemeManager.Library first!')
-        --// Two columns only. Themes sits under Menu on the left.
         return tab:AddLeftGroupbox('Themes')
     end
 
