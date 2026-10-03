@@ -350,9 +350,25 @@ function Library:MakeDraggable(Instance, Cutoff, IsMainWindow)
 			end, function()
 				Instance.Position = DragPreview.Position
 				DragPreview.Visible = false
+				Library:SnapPosition(Instance)
 			end)
 		end
 	end)
+end
+function Library:SnapPosition(Instance)
+	local Absolute = Instance.AbsolutePosition
+	local FractionX = Absolute.X - math.floor(Absolute.X)
+	local FractionY = Absolute.Y - math.floor(Absolute.Y)
+	if FractionX == 0 and FractionY == 0 then
+		return
+	end
+	local Position = Instance.Position
+	Instance.Position = UDim2.new(
+		Position.X.Scale,
+		Position.X.Offset - FractionX,
+		Position.Y.Scale,
+		Position.Y.Offset - FractionY
+	)
 end
 function Library:AddToolTip(InfoStr, HoverInstance)
 	local X, Y = Library:GetTextBounds(InfoStr, Library.FontFace, 12)
@@ -630,19 +646,57 @@ do
 			Parent = PickerFrameInner,
 		})
 		local SatVibMapInner = Library:Create("Frame", {
-			BackgroundColor3 = Library.BackgroundColor,
+			BackgroundColor3 = Color3.new(1, 1, 1),
 			BorderColor3 = Library.OutlineColor,
 			BorderMode = Enum.BorderMode.Inset,
 			Size = UDim2.new(1, 0, 1, 0),
 			ZIndex = 18,
 			Parent = SatVibMapOuter,
 		})
-		local SatVibMap = Library:Create("ImageLabel", {
+		local SatVibMap = Library:Create("Frame", {
+			BackgroundColor3 = Color3.new(1, 1, 1),
+			BorderSizePixel = 0,
+			ClipsDescendants = true,
+			Size = UDim2.new(1, 0, 1, 0),
+			ZIndex = 18,
+			Parent = SatVibMapInner,
+		})
+		local SatVibHue = Library:Create("Frame", {
+			BackgroundColor3 = Color3.fromHSV(0, 1, 1),
 			BorderSizePixel = 0,
 			Size = UDim2.new(1, 0, 1, 0),
 			ZIndex = 18,
-			Image = Library:ResolveImage("rbxassetid://4155801252"),
-			Parent = SatVibMapInner,
+			Parent = SatVibMap,
+		})
+		local SatVibWhite = Library:Create("Frame", {
+			BackgroundColor3 = Color3.new(1, 1, 1),
+			BorderSizePixel = 0,
+			Size = UDim2.new(1, 0, 1, 0),
+			ZIndex = 19,
+			Parent = SatVibMap,
+		})
+		Library:Create("UIGradient", {
+			Transparency = NumberSequence.new({
+				NumberSequenceKeypoint.new(0, 0),
+				NumberSequenceKeypoint.new(1, 1),
+			}),
+			Rotation = 0,
+			Parent = SatVibWhite,
+		})
+		local SatVibBlack = Library:Create("Frame", {
+			BackgroundColor3 = Color3.new(0, 0, 0),
+			BorderSizePixel = 0,
+			Size = UDim2.new(1, 0, 1, 0),
+			ZIndex = 20,
+			Parent = SatVibMap,
+		})
+		Library:Create("UIGradient", {
+			Transparency = NumberSequence.new({
+				NumberSequenceKeypoint.new(0, 1),
+				NumberSequenceKeypoint.new(1, 0),
+			}),
+			Rotation = 90,
+			Parent = SatVibBlack,
 		})
 		local CursorOuter = Library:Create("ImageLabel", {
 			AnchorPoint = Vector2.new(0.5, 0.5),
@@ -925,7 +979,7 @@ do
 		end)
 		function ColorPicker:Display()
 			ColorPicker.Value = Color3.fromHSV(ColorPicker.Hue, ColorPicker.Sat, ColorPicker.Vib)
-			SatVibMap.BackgroundColor3 = Color3.fromHSV(ColorPicker.Hue, 1, 1)
+			SatVibHue.BackgroundColor3 = Color3.fromHSV(ColorPicker.Hue, 1, 1)
 			Library:Create(DisplayFrame, {
 				BackgroundColor3 = ColorPicker.Value,
 				BackgroundTransparency = ColorPicker.Transparency,
@@ -3917,7 +3971,8 @@ function Library:UpdateKeybindFrame()
 			YSize = 18
 		end
 	end
-	Library.KeybindFrame.Size = UDim2.new(0, math.max(XSize + 10, 210), 0, YSize + 25)
+	Library.KeybindFrame.Size = UDim2.new(0, math.ceil(math.max(XSize + 10, 210)), 0, YSize + 25)
+	Library:SnapPosition(Library.KeybindFrame)
 end
 do
 	Library.NotificationArea = Library:Create("Frame", {
@@ -4524,6 +4579,12 @@ function Library:CreateWindow(...)
 	local Window = {
 		Tabs = {},
 	}
+	Config.Size = UDim2.new(
+		Config.Size.X.Scale,
+		math.floor(Config.Size.X.Offset + 0.5),
+		Config.Size.Y.Scale,
+		math.floor(Config.Size.Y.Offset + 0.5)
+	)
 	local Outer = Library:Create("Frame", {
 		AnchorPoint = Config.AnchorPoint,
 		BackgroundColor3 = Color3.new(0, 0, 0),
@@ -4535,6 +4596,12 @@ function Library:CreateWindow(...)
 		Parent = ScreenGui,
 	})
 	Library:MakeDraggable(Outer, 25, true)
+	Outer:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
+		Library:SnapPosition(Outer)
+	end)
+	task.defer(function()
+		Library:SnapPosition(Outer)
+	end)
 	if Library.IsMobile and MobileAutoHeight then
 		local Camera = workspace.CurrentCamera
 		if Camera then
@@ -4550,9 +4617,30 @@ function Library:CreateWindow(...)
 		ZIndex = 0,
 	})
 	Library.Glow = Glow
+	local WindowOutlineStroke, WindowOutlineHighlight
+	if Config.OutlineStroke then
+		WindowOutlineStroke = Library:Create("UIStroke", {
+			Color = Library.OutlineColor,
+			Thickness = 1,
+			ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+			Parent = Outer,
+		})
+		Library:AddToRegistry(WindowOutlineStroke, { Color = "OutlineColor" })
+		WindowOutlineHighlight = Library:Create("UIStroke", {
+			Color = Library.AccentColor,
+			Thickness = 1,
+			Transparency = 1,
+			ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+			Parent = Outer,
+		})
+		Library:AddToRegistry(WindowOutlineHighlight, { Color = "AccentColor" })
+		Library.WindowOutlineStroke = WindowOutlineStroke
+		Library.WindowOutlineHighlight = WindowOutlineHighlight
+	end
 	local Inner = Library:Create("Frame", {
 		BackgroundColor3 = Library.MainColor,
 		BorderColor3 = Library.AccentColor,
+		BorderSizePixel = 0,
 		BorderMode = Enum.BorderMode.Inset,
 		Position = UDim2.new(0, 1, 0, 1),
 		Size = UDim2.new(1, -2, 1, -2),
@@ -4561,7 +4649,6 @@ function Library:CreateWindow(...)
 	})
 	Library:AddToRegistry(Inner, {
 		BackgroundColor3 = "MainColor",
-		BorderColor3 = "AccentColor",
 	})
 	local WindowLabel = Library:CreateLabel({
 		AutomaticSize = Enum.AutomaticSize.X,
@@ -4597,20 +4684,22 @@ function Library:CreateWindow(...)
 		end
 	end)
 	local MainSectionOuter = Library:Create("Frame", {
-		BackgroundColor3 = Library.BackgroundColor,
+		BackgroundColor3 = Library.MainColor,
 		BorderColor3 = Library.OutlineColor,
+		BorderSizePixel = 0,
 		Position = UDim2.new(0, 8, 0, 25),
 		Size = UDim2.new(1, -16, 1, -33),
 		ZIndex = 1,
 		Parent = Inner,
 	})
 	Library:AddToRegistry(MainSectionOuter, {
-		BackgroundColor3 = "BackgroundColor",
+		BackgroundColor3 = "MainColor",
 		BorderColor3 = "OutlineColor",
 	})
 	local MainSectionInner = Library:Create("Frame", {
-		BackgroundColor3 = Library.BackgroundColor,
+		BackgroundColor3 = Library.MainColor,
 		BorderColor3 = Color3.new(0, 0, 0),
+		BorderSizePixel = 0,
 		BorderMode = Enum.BorderMode.Inset,
 		Position = UDim2.new(0, 0, 0, 0),
 		Size = UDim2.new(1, 0, 1, 0),
@@ -4618,7 +4707,7 @@ function Library:CreateWindow(...)
 		Parent = MainSectionOuter,
 	})
 	Library:AddToRegistry(MainSectionInner, {
-		BackgroundColor3 = "BackgroundColor",
+		BackgroundColor3 = "MainColor",
 	})
 	local TabArea = Library:Create("Frame", {
 		BackgroundTransparency = 1,
@@ -4673,6 +4762,7 @@ function Library:CreateWindow(...)
 	local TabContainer = Library:Create("Frame", {
 		BackgroundColor3 = Library.MainColor,
 		BorderColor3 = Library.OutlineColor,
+		BorderSizePixel = 0,
 		Position = UDim2.new(0, 8, 0, 30),
 		Size = UDim2.new(1, -16, 1, -38),
 		ZIndex = 2,
@@ -4717,6 +4807,14 @@ function Library:CreateWindow(...)
 		Library:AddToRegistry(TabButton, {
 			BackgroundColor3 = "BackgroundColor",
 		})
+		if WindowOutlineHighlight then
+			Library:OnHighlight(
+				TabButton,
+				WindowOutlineHighlight,
+				{ Color = "AccentColor", Transparency = 0 },
+				{ Color = "OutlineColor", Transparency = 1 }
+			)
+		end
 		local TabButtonLabel = Library:CreateLabel({
 			Position = UDim2.new(0, 0, 0, 0),
 			Size = UDim2.new(1, 0, 1, -1),
@@ -4786,6 +4884,19 @@ function Library:CreateWindow(...)
 			ZIndex = 2,
 			Parent = TabFrame,
 		})
+		local function ResizeSides()
+			local Width = TabFrame.AbsoluteSize.X
+			if Width < 24 then
+				return
+			end
+			local Left = math.floor((Width - 20) / 2)
+			LeftSide.Position = UDim2.new(0, 7, 0, 7)
+			LeftSide.Size = UDim2.new(0, Left, 1, -14)
+			RightSide.Position = UDim2.new(0, Left + 15, 0, 7)
+			RightSide.Size = UDim2.new(0, Width - 20 - Left, 1, -14)
+		end
+		TabFrame:GetPropertyChangedSignal("AbsoluteSize"):Connect(ResizeSides)
+		ResizeSides()
 		local function GetSide(Side)
 			return Side == 1 and LeftSide or RightSide
 		end
@@ -5058,6 +5169,20 @@ function Library:CreateWindow(...)
 				SortOrder = Enum.SortOrder.LayoutOrder,
 				Parent = TabboxButtons,
 			})
+			local TabboxButtonList = {}
+			local function ResizeTabboxButtons()
+				local Width = TabboxButtons.AbsoluteSize.X
+				local Count = #TabboxButtonList
+				if Width <= 0 or Count == 0 then
+					return
+				end
+				local Base = math.floor(Width / Count)
+				local Extra = Width - (Base * Count)
+				for Index, Entry in ipairs(TabboxButtonList) do
+					Entry.Size = UDim2.new(0, Base + (Index <= Extra and 1 or 0), 1, 0)
+				end
+			end
+			TabboxButtons:GetPropertyChangedSignal("AbsoluteSize"):Connect(ResizeTabboxButtons)
 			function Tabbox:AddTab(Name)
 				local Tab = {}
 				local Button = Library:Create("Frame", {
@@ -5067,6 +5192,8 @@ function Library:CreateWindow(...)
 					ZIndex = 6,
 					Parent = TabboxButtons,
 				})
+				table.insert(TabboxButtonList, Button)
+				ResizeTabboxButtons()
 				Library:AddToRegistry(Button, {
 					BackgroundColor3 = "MainColor",
 				})
