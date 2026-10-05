@@ -1,30 +1,36 @@
-if not (isfile and isfile("Tahoma.ttf")) then
-	pcall(function()
-		writefile("Tahoma.ttf", game:HttpGet("https://github.com/sametexe001/luas/raw/refs/heads/main/fonts/windows-xp-tahoma.ttf"))
-	end)
-end
-pcall(function()
-	writefile("Tahoma.font", game:GetService("HttpService"):JSONEncode({
-		name = "Tahoma",
-		faces = {
-			{
-				name = "Regular",
-				weight = 400,
-				style = "normal",
-				assetId = getcustomasset("Tahoma.ttf"),
-			},
-		},
-	}))
-end)
-local ResolvedFontFace = Font.fromEnum(Enum.Font.Code)
-do
+local Library = (function()
+local TahomaUrl = "https://github.com/sametexe001/luas/raw/refs/heads/main/fonts/windows-xp-tahoma.ttf"
+local function BuildTahomaFace()
+	if isfile and not isfile("Tahoma.ttf") then
+		return nil
+	end
+	if isfile and not isfile("Tahoma.font") then
+		pcall(function()
+			writefile("Tahoma.font", game:GetService("HttpService"):JSONEncode({
+				name = "Tahoma",
+				faces = {
+					{
+						name = "Regular",
+						weight = 400,
+						style = "normal",
+						assetId = getcustomasset("Tahoma.ttf"),
+					},
+				},
+			}))
+		end)
+	end
+	if isfile and not isfile("Tahoma.font") then
+		return nil
+	end
 	local Ok, Face = pcall(function()
 		return Font.new(getcustomasset("Tahoma.font"), Enum.FontWeight.Regular)
 	end)
-	if Ok and Face then
-		ResolvedFontFace = Face
+	if Ok then
+		return Face
 	end
+	return nil
 end
+local ResolvedFontFace = BuildTahomaFace() or Font.fromEnum(Enum.Font.Code)
 local InputService = game:GetService("UserInputService")
 local TextService = game:GetService("TextService")
 local CoreGui = game:GetService("CoreGui")
@@ -52,10 +58,11 @@ local Library = {
 	Registry = {},
 	RegistryMap = {},
 	HudRegistry = {},
-	SpeedGraphInstances = {},
-	IndicatorInstances = {},
 	MenuOnlyDrag = {},
 	GlowObjects = {},
+	FontInstances = {},
+	TextBoundsCache = {},
+	TextBoundsCount = 0,
 	GlowTransparency = 0.5,
 	NotificationInAnim = "fade",
 	NotificationOutAnim = "fade",
@@ -160,6 +167,9 @@ function Library:Create(Class, Properties)
 	for Property, Value in next, Properties do
 		_Instance[Property] = Value
 	end
+	if type(Class) == "string" and (_Instance:IsA("TextLabel") or _Instance:IsA("TextButton") or _Instance:IsA("TextBox")) then
+		table.insert(Library.FontInstances, _Instance)
+	end
 	return _Instance
 end
 function Library:ApplyTextStroke(Inst)
@@ -172,25 +182,67 @@ function Library:ApplyTextStroke(Inst)
 	})
 end
 local ImageCache = {}
-local function RegisterImage(Key, File, Url)
+local ImagePending = {}
+local function IsImageData(Data)
+	if type(Data) ~= "string" or #Data < 16 then
+		return false
+	end
+	local Head = Data:sub(1, 12)
+	return Head:sub(1, 8) == "\137PNG\r\n\26\n"
+		or Head:sub(1, 3) == "\255\216\255"
+		or Head:sub(1, 6) == "GIF89a"
+		or Head:sub(1, 6) == "GIF87a"
+		or (Head:sub(1, 4) == "RIFF" and Head:sub(9, 12) == "WEBP")
+end
+local function FetchImage(Key, File, Url)
+	if ImagePending[Key] then
+		return
+	end
+	ImagePending[Key] = true
+	task.spawn(function()
+		local Ok, Asset = pcall(function()
+			if not isfolder("LinoraAssets") then
+				makefolder("LinoraAssets")
+			end
+			if isfile(File) and not IsImageData(readfile(File)) then
+				delfile(File)
+			end
+			if not isfile(File) then
+				local Data = game:HttpGet(Url)
+				if IsImageData(Data) then
+					writefile(File, Data)
+				end
+			end
+			if isfile(File) and IsImageData(readfile(File)) then
+				return getcustomasset(File)
+			end
+			return nil
+		end)
+		ImagePending[Key] = nil
+		if Ok and Asset then
+			ImageCache[Key] = Asset
+		end
+	end)
+end
+local function CachedImage(Key, File, Url)
 	if ImageCache[Key] then
 		return ImageCache[Key]
 	end
-	pcall(function()
-		if not isfolder("LinoraAssets") then
-			makefolder("LinoraAssets")
-		end
-		if not isfile(File) then
-			local Data = game:HttpGet(Url)
-			if type(Data) == "string" and #Data > 100 then
-				writefile(File, Data)
+	if isfile(File) then
+		local Ok, Asset = pcall(function()
+			if IsImageData(readfile(File)) then
+				return getcustomasset(File)
 			end
+			delfile(File)
+			return nil
+		end)
+		if Ok and Asset then
+			ImageCache[Key] = Asset
+			return Asset
 		end
-		if isfile(File) then
-			ImageCache[Key] = getcustomasset(File)
-		end
-	end)
-	return ImageCache[Key]
+	end
+	FetchImage(Key, File, Url)
+	return nil
 end
 function Library:ResolveImage(Src)
 	if type(Src) == "number" then
@@ -204,16 +256,13 @@ function Library:ResolveImage(Src)
 	end
 	local AssetId = Src:match("^rbxassetid://(%d+)") or Src:match("^(%d+)$") or Src:match("roblox%.com/asset/%?id=(%d+)")
 	if AssetId then
-		local Resolved = RegisterImage(AssetId, "LinoraAssets/asset_" .. AssetId .. ".png", "https://www.roblox.com/asset/?id=" .. AssetId)
-		return Resolved or ("rbxassetid://" .. AssetId)
-	end
-	if Src:match("^rbxassetid://") then
-		return Src
+		return "rbxassetid://" .. AssetId
 	end
 	if not Src:match("^https?://") then
 		return nil
 	end
-	return RegisterImage(Src, "LinoraAssets/" .. Src:gsub("[^%w]", ""):sub(-40) .. ".png", Src)
+	local Key = Src:gsub("[^%w]", ""):sub(-40)
+	return CachedImage(Key, "LinoraAssets/" .. Key .. ".png", Src)
 end
 function Library:SetTextFade(Inst, Transparency)
 	Inst.TextTransparency = Transparency
@@ -300,6 +349,31 @@ function Library:CreateLabel(Properties, IsHud)
 	}, IsHud)
 	return Library:Create(_Instance, Properties)
 end
+
+function Library:ApplyFontFace(Face)
+	Library.FontFace = Face
+	for _, Inst in ipairs(Library.FontInstances) do
+		if Inst.Parent then
+			Inst.FontFace = Face
+		end
+	end
+	table.clear(Library.TextBoundsCache)
+	Library.TextBoundsCount = 0
+	if Library.RelayoutTabs then
+		Library.RelayoutTabs()
+	end
+end
+if isfile and not isfile("Tahoma.ttf") then
+	task.spawn(function()
+		pcall(function()
+			writefile("Tahoma.ttf", game:HttpGet(TahomaUrl))
+		end)
+		local Late = BuildTahomaFace()
+		if Late then
+			Library:ApplyFontFace(Late)
+		end
+	end)
+end
 function Library:MakeDraggable(Instance, Cutoff, IsMainWindow)
 	Instance.Active = true
 	local DragPreview = Library:Create("Frame", {
@@ -371,18 +445,25 @@ function Library:SnapPosition(Instance)
 	)
 end
 function Library:AddToolTip(InfoStr, HoverInstance)
-	local X, Y = Library:GetTextBounds(InfoStr, Library.FontFace, 12)
 	local Tooltip = Library:Create("Frame", {
 		BackgroundColor3 = Library.MainColor,
 		BorderColor3 = Library.OutlineColor,
-		Size = UDim2.fromOffset(X + 5, Y + 4),
+		Size = UDim2.fromOffset(0, 0),
+		AutomaticSize = Enum.AutomaticSize.XY,
 		ZIndex = 100,
 		Parent = Library.ScreenGui,
 		Visible = false,
 	})
+	Library:Create("UIPadding", {
+		PaddingTop = UDim.new(0, 1),
+		PaddingBottom = UDim.new(0, 3),
+		PaddingLeft = UDim.new(0, 3),
+		PaddingRight = UDim.new(0, 2),
+		Parent = Tooltip,
+	})
 	local Label = Library:CreateLabel({
-		Position = UDim2.fromOffset(3, 1),
-		Size = UDim2.fromOffset(X, Y),
+		Size = UDim2.fromOffset(0, 0),
+		AutomaticSize = Enum.AutomaticSize.XY,
 		TextSize = 12,
 		Text = InfoStr,
 		TextColor3 = Library.FontColor,
@@ -470,13 +551,24 @@ function Library:MapValue(Value, MinA, MaxA, MinB, MaxB)
 	return (1 - ((Value - MinA) / (MaxA - MinA))) * MinB + ((Value - MinA) / (MaxA - MinA)) * MaxB
 end
 function Library:GetTextBounds(Text, FontFace, Size, Resolution)
+	local WrapWidth = Resolution and Resolution.X or math.huge
+	local Key = Text .. "\0" .. Size .. "\0" .. WrapWidth
+	local Cached = Library.TextBoundsCache[Key]
+	if Cached then
+		return Cached[1], Cached[2]
+	end
 	local Params = Instance.new("GetTextBoundsParams")
 	Params.Text = Text
 	Params.Font = FontFace
 	Params.Size = Size
-	local WrapWidth = Resolution and Resolution.X or math.huge
 	Params.Width = WrapWidth > 1 and WrapWidth or math.huge
 	local Bounds = TextService:GetTextBoundsAsync(Params)
+	if Library.TextBoundsCount > 256 then
+		table.clear(Library.TextBoundsCache)
+		Library.TextBoundsCount = 0
+	end
+	Library.TextBoundsCache[Key] = { Bounds.X, Bounds.Y }
+	Library.TextBoundsCount = Library.TextBoundsCount + 1
 	return Bounds.X, Bounds.Y
 end
 function Library:GetDarkerColor(Color)
@@ -558,8 +650,6 @@ function Library:Unload()
 		local Connection = table.remove(Library.Signals, Idx)
 		Connection:Disconnect()
 	end
-	table.clear(Library.SpeedGraphInstances)
-	table.clear(Library.IndicatorInstances)
 	table.clear(Library.MenuOnlyDrag)
 	if Library.OnUnload then
 		Library.OnUnload()
@@ -1225,6 +1315,12 @@ do
 			Info.Modes = { "Toggle" }
 			Info.Mode = "Toggle"
 		end
+		local function KeyText(Key)
+			if Key == nil or Key == "" or Key == "None" or Key == "-" then
+				return "..."
+			end
+			return Key
+		end
 		local PickOuter = Library:Create("Frame", {
 			BackgroundColor3 = Color3.new(0, 0, 0),
 			BorderColor3 = Color3.new(0, 0, 0),
@@ -1247,7 +1343,7 @@ do
 		local DisplayLabel = Library:CreateLabel({
 			Size = UDim2.new(1, 0, 1, 0),
 			TextSize = 12,
-			Text = Info.Default,
+			Text = KeyText(Info.Default),
 			TextWrapped = true,
 			ZIndex = 8,
 			Parent = PickInner,
@@ -1359,7 +1455,7 @@ do
 		end
 		function KeyPicker:SetValue(Data)
 			local Key, Mode = Data[1], Data[2]
-			DisplayLabel.Text = Key
+			DisplayLabel.Text = KeyText(Key)
 			KeyPicker.Value = Key
 			ModeButtons[Mode]:Select()
 			KeyPicker:Update()
@@ -1434,7 +1530,7 @@ do
 					end
 					Break = true
 					Picking = false
-					DisplayLabel.Text = Key
+					DisplayLabel.Text = KeyText(Key)
 					KeyPicker.Value = Key
 					Library:SafeCallback(KeyPicker.ChangedCallback, Input.KeyCode or Input.UserInputType)
 					Library:SafeCallback(KeyPicker.Changed, Input.KeyCode or Input.UserInputType)
@@ -2301,6 +2397,14 @@ do
 			ZIndex = 6,
 			Parent = ToggleInner,
 		})
+		local function FitToggleLabel()
+			local Width = Container.AbsoluteSize.X
+			if Width > 0 then
+				ToggleLabel.Size = UDim2.new(0, math.max(Width - 19, 60), 1, 0)
+			end
+		end
+		Container:GetPropertyChangedSignal("AbsoluteSize"):Connect(FitToggleLabel)
+		FitToggleLabel()
 		Library:Create("UIListLayout", {
 			Padding = UDim.new(0, 4),
 			FillDirection = Enum.FillDirection.Horizontal,
@@ -2966,15 +3070,6 @@ do
 			Rotation = 90,
 			Parent = DropdownInner,
 		})
-		local DropdownArrow = Library:Create("ImageLabel", {
-			AnchorPoint = Vector2.new(0, 0.5),
-			BackgroundTransparency = 1,
-			Position = UDim2.new(1, -16, 0.5, 0),
-			Size = UDim2.new(0, 12, 0, 12),
-			Image = Library:ResolveImage("http://www.roblox.com/asset/?id=6282522798"),
-			ZIndex = 8,
-			Parent = DropdownInner,
-		})
 		local ItemList = Library:CreateLabel({
 			Position = UDim2.new(0, 5, 0, 0),
 			Size = UDim2.new(1, -5, 1, 0),
@@ -3184,7 +3279,6 @@ do
 		function Dropdown:OpenDropdown()
 			ListOuter.Visible = true
 			Library.OpenedFrames[ListOuter] = true
-			DropdownArrow.Rotation = 180
 			if Library.IsMobile then
 				Library.CanDrag = false
 			end
@@ -3192,7 +3286,6 @@ do
 		function Dropdown:CloseDropdown()
 			ListOuter.Visible = false
 			Library.OpenedFrames[ListOuter] = nil
-			DropdownArrow.Rotation = 0
 			if Library.IsMobile then
 				Library.CanDrag = true
 			end
@@ -3350,15 +3443,6 @@ do
 				ColorSequenceKeypoint.new(1, Color3.fromRGB(212, 212, 212)),
 			}),
 			Rotation = 90,
-			Parent = DropdownInner,
-		})
-		local DropdownArrow = Library:Create("ImageLabel", {
-			AnchorPoint = Vector2.new(0, 0.5),
-			BackgroundTransparency = 1,
-			Position = UDim2.new(1, -16, 0.5, 0),
-			Size = UDim2.new(0, 12, 0, 12),
-			Image = Library:ResolveImage("http://www.roblox.com/asset/?id=6282522798"),
-			ZIndex = 8,
 			Parent = DropdownInner,
 		})
 		local ItemList = Library:CreateLabel({
@@ -3659,7 +3743,6 @@ do
 		function Dropdown:OpenDropdown()
 			ListOuter.Visible = true
 			Library.OpenedFrames[ListOuter] = true
-			DropdownArrow.Rotation = 180
 			if Library.IsMobile then
 				Library.CanDrag = false
 			end
@@ -3670,7 +3753,6 @@ do
 		function Dropdown:CloseDropdown()
 			ListOuter.Visible = false
 			Library.OpenedFrames[ListOuter] = nil
-			DropdownArrow.Rotation = 0
 			if Library.IsMobile then
 				Library.CanDrag = true
 			end
@@ -4650,24 +4732,49 @@ function Library:CreateWindow(...)
 	Library:AddToRegistry(Inner, {
 		BackgroundColor3 = "MainColor",
 	})
+	local TitleBar = Library:Create("Frame", {
+		BackgroundColor3 = Color3.new(1, 1, 1),
+		BorderSizePixel = 0,
+		Size = UDim2.new(1, 0, 0, 25),
+		ZIndex = 1,
+		Parent = Inner,
+	})
+	Library:Create("UIGradient", {
+		Rotation = 90,
+		Transparency = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, 0.9),
+			NumberSequenceKeypoint.new(1, 1),
+		}),
+		Parent = TitleBar,
+	})
+	local TopLine = Library:Create("Frame", {
+		BackgroundColor3 = Library.AccentColor,
+		BorderSizePixel = 0,
+		Size = UDim2.new(1, 0, 0, 2),
+		ZIndex = 3,
+		Parent = Inner,
+	})
+	Library:AddToRegistry(TopLine, {
+		BackgroundColor3 = "AccentColor",
+	})
 	local WindowLabel = Library:CreateLabel({
 		AutomaticSize = Enum.AutomaticSize.X,
-		AnchorPoint = Vector2.new(0.5, 0),
-		Position = UDim2.new(0.5, 0, 0, 0),
+		AnchorPoint = Vector2.new(0, 0),
+		Position = UDim2.new(0, 10, 0, 0),
 		Size = UDim2.new(0, 0, 0, 25),
 		Text = Config.Title or "",
-		TextXAlignment = Enum.TextXAlignment.Center,
-		ZIndex = 1,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		ZIndex = 2,
 		Parent = Inner,
 	})
 	Library.WindowTitleLabel = WindowLabel
 	Library:SetAnimateTitle(Library.AnimateTitle)
 	local GameNameLabel = Library:CreateLabel({
-		Position = UDim2.new(1, -7, 0, 0),
+		Position = UDim2.new(1, -10, 0, 0),
 		Size = UDim2.new(0, 0, 0, 25),
 		Text = "",
 		TextXAlignment = Enum.TextXAlignment.Right,
-		ZIndex = 1,
+		ZIndex = 2,
 		Parent = Inner,
 	})
 	Library:RemoveFromRegistry(GameNameLabel)
@@ -4709,21 +4816,26 @@ function Library:CreateWindow(...)
 	Library:AddToRegistry(MainSectionInner, {
 		BackgroundColor3 = "MainColor",
 	})
+	local Sidebar = Config.Nav == "Sidebar"
+	local SidebarWidth = Sidebar and math.floor(tonumber(Config.SidebarWidth) or 118) or 0
 	local TabArea = Library:Create("Frame", {
 		BackgroundTransparency = 1,
 		Position = UDim2.new(0, 8, 0, 8),
-		Size = UDim2.new(1, -16, 0, 21),
+		Size = Sidebar and UDim2.new(0, SidebarWidth, 1, -16) or UDim2.new(1, -16, 0, 28),
 		ZIndex = 1,
 		Parent = MainSectionInner,
 	})
 	local TabListLayout = Library:Create("UIListLayout", {
-		Padding = UDim.new(0, Config.TabPadding),
-		FillDirection = Enum.FillDirection.Horizontal,
+		Padding = Sidebar and UDim.new(0, 2) or UDim.new(0, Config.TabPadding),
+		FillDirection = Sidebar and Enum.FillDirection.Vertical or Enum.FillDirection.Horizontal,
 		SortOrder = Enum.SortOrder.LayoutOrder,
 		Parent = TabArea,
 	})
 	local TabButtons = {}
 	local function ResizeTabs()
+		if Sidebar then
+			return
+		end
 		local Count = #TabButtons
 		if Count == 0 then
 			return
@@ -4759,19 +4871,33 @@ function Library:CreateWindow(...)
 		end
 	end
 	TabArea:GetPropertyChangedSignal("AbsoluteSize"):Connect(ResizeTabs)
+	Library.RelayoutTabs = ResizeTabs
 	local TabContainer = Library:Create("Frame", {
-		BackgroundColor3 = Library.MainColor,
+		BackgroundColor3 = Color3.new(0, 0, 0),
+		BackgroundTransparency = 0.7,
 		BorderColor3 = Library.OutlineColor,
 		BorderSizePixel = 0,
-		Position = UDim2.new(0, 8, 0, 30),
-		Size = UDim2.new(1, -16, 1, -38),
+		Position = Sidebar and UDim2.new(0, SidebarWidth + 14, 0, 8) or UDim2.new(0, 8, 0, 37),
+		Size = Sidebar and UDim2.new(1, -(SidebarWidth + 22), 1, -16) or UDim2.new(1, -16, 1, -45),
 		ZIndex = 2,
 		Parent = MainSectionInner,
 	})
 	Library:AddToRegistry(TabContainer, {
-		BackgroundColor3 = "MainColor",
 		BorderColor3 = "OutlineColor",
 	})
+	if Sidebar then
+		local Divider = Library:Create("Frame", {
+			BackgroundColor3 = Library.OutlineColor,
+			BorderSizePixel = 0,
+			Position = UDim2.new(0, SidebarWidth + 11, 0, 8),
+			Size = UDim2.new(0, 1, 1, -16),
+			ZIndex = 2,
+			Parent = MainSectionInner,
+		})
+		Library:AddToRegistry(Divider, {
+			BackgroundColor3 = "OutlineColor",
+		})
+	end
 	function Window:SetWindowTitle(Title)
 		WindowLabel.Text = Title
 		if Library.AnimateTitle then
@@ -4783,11 +4909,12 @@ function Library:CreateWindow(...)
 			Groupboxes = {},
 			Tabboxes = {},
 		}
+		local TabActive = false
 		local TabButtonWidth = Library:GetTextBounds(Name, Library.FontFace, 16)
 		local TabButton = Library:Create("Frame", {
-			BackgroundColor3 = Library.BackgroundColor,
+			BackgroundTransparency = 1,
 			BorderSizePixel = 0,
-			Size = UDim2.new(0, TabButtonWidth + 8 + 4, 1, 0),
+			Size = Sidebar and UDim2.new(1, 0, 0, 20) or UDim2.new(0, TabButtonWidth + 8 + 4, 1, 0),
 			ZIndex = 1,
 			Parent = TabArea,
 		})
@@ -4796,17 +4923,50 @@ function Library:CreateWindow(...)
 			Index = #TabButtons + 1,
 			MinWidth = math.ceil(TabButtonWidth) + 8 + 4,
 		})
-		local Gradient = Library:Create("UIGradient", {
-			Rotation = -90,
+		local TabHover = Library:Create("Frame", {
+			BackgroundColor3 = Color3.new(1, 1, 1),
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			Size = UDim2.new(1, 0, 1, -2),
+			ZIndex = 1,
 			Parent = TabButton,
-			Color = ColorSequence.new({
-				ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 255, 255)),
-				ColorSequenceKeypoint.new(1, Color3.fromRGB(185, 185, 185)),
+		})
+		local TabFill = Library:Create("Frame", {
+			BackgroundColor3 = Color3.new(1, 1, 1),
+			BorderSizePixel = 0,
+			Size = UDim2.new(1, 0, 1, -2),
+			ZIndex = 1,
+			Parent = TabButton,
+			Visible = false,
+		})
+		Library:Create("UIGradient", {
+			Rotation = 90,
+			Transparency = NumberSequence.new({
+				NumberSequenceKeypoint.new(0, 1),
+				NumberSequenceKeypoint.new(1, 0.9),
 			}),
+			Parent = TabFill,
 		})
-		Library:AddToRegistry(TabButton, {
-			BackgroundColor3 = "BackgroundColor",
+		local ColorLine = Library:Create("Frame", {
+			BackgroundColor3 = Library.OutlineColor,
+			BorderSizePixel = 0,
+			Position = Sidebar and UDim2.new(0, 0, 0, 0) or UDim2.new(0, 0, 1, -2),
+			Size = Sidebar and UDim2.new(0, 2, 1, 0) or UDim2.new(1, 0, 0, 2),
+			ZIndex = 3,
+			Parent = TabButton,
+			Visible = not Sidebar,
 		})
+		Library:AddToRegistry(ColorLine, {
+			BackgroundColor3 = "OutlineColor",
+		})
+		TabButton.MouseEnter:Connect(function()
+			if not TabActive then
+				TabHover.BackgroundTransparency = 0.95
+			end
+		end)
+		TabButton.MouseLeave:Connect(function()
+			TabHover.BackgroundTransparency = 1
+		end)
 		if WindowOutlineHighlight then
 			Library:OnHighlight(
 				TabButton,
@@ -4816,35 +4976,15 @@ function Library:CreateWindow(...)
 			)
 		end
 		local TabButtonLabel = Library:CreateLabel({
-			Position = UDim2.new(0, 0, 0, 0),
-			Size = UDim2.new(1, 0, 1, -1),
+			Position = Sidebar and UDim2.new(0, 10, 0, 0) or UDim2.new(0, 0, 0, 0),
+			Size = Sidebar and UDim2.new(1, -10, 1, 0) or UDim2.new(1, 0, 1, -2),
 			Text = Name,
-			ZIndex = 1,
-			Parent = TabButton,
-		})
-		local ColorLine = Library:Create("Frame", {
-			BackgroundColor3 = Library.AccentColor,
-			BorderSizePixel = 0,
-			Size = UDim2.new(1, 0, 0, 1),
+			TextXAlignment = Sidebar and Enum.TextXAlignment.Left or Enum.TextXAlignment.Center,
 			ZIndex = 2,
 			Parent = TabButton,
-			Visible = false
 		})
-		Library:AddToRegistry(ColorLine, {
-			BackgroundColor3 = "AccentColor",
-		})
-		local Blocker = Library:Create("Frame", {
-			BackgroundColor3 = Library.MainColor,
-			BorderSizePixel = 0,
-			Position = UDim2.new(0, 0, 1, 0),
-			Size = UDim2.new(1, 0, 0, 1),
-			BackgroundTransparency = 1,
-			ZIndex = 3,
-			Parent = TabButton,
-		})
-		Library:AddToRegistry(Blocker, {
-			BackgroundColor3 = "MainColor",
-		})
+		TabButtonLabel.TextColor3 = Library.DisabledColor
+		Library.RegistryMap[TabButtonLabel].Properties.TextColor3 = "DisabledColor"
 		local TabFrame = Library:Create("Frame", {
 			Name = "TabFrame",
 			BackgroundTransparency = 1,
@@ -4931,17 +5071,24 @@ function Library:CreateWindow(...)
 			for _, Tab in next, Window.Tabs do
 				Tab:HideTab()
 			end
-			Blocker.BackgroundTransparency = 0
-			TabButton.BackgroundColor3 = Library.MainColor
+			TabActive = true
+			TabHover.BackgroundTransparency = 1
+			TabFill.Visible = true
 			ColorLine.Visible = true
-			Library.RegistryMap[TabButton].Properties.BackgroundColor3 = "MainColor"
+			ColorLine.BackgroundColor3 = Library.AccentColor
+			Library.RegistryMap[ColorLine].Properties.BackgroundColor3 = "AccentColor"
+			TabButtonLabel.TextColor3 = Library.FontColor
+			Library.RegistryMap[TabButtonLabel].Properties.TextColor3 = "FontColor"
 			TabFrame.Visible = true
 		end
 		function Tab:HideTab()
-			Blocker.BackgroundTransparency = 1
-			TabButton.BackgroundColor3 = Library.BackgroundColor
-			ColorLine.Visible = false
-			Library.RegistryMap[TabButton].Properties.BackgroundColor3 = "BackgroundColor"
+			TabActive = false
+			TabFill.Visible = false
+			ColorLine.Visible = not Sidebar
+			ColorLine.BackgroundColor3 = Library.OutlineColor
+			Library.RegistryMap[ColorLine].Properties.BackgroundColor3 = "OutlineColor"
+			TabButtonLabel.TextColor3 = Library.DisabledColor
+			Library.RegistryMap[TabButtonLabel].Properties.TextColor3 = "DisabledColor"
 			TabFrame.Visible = false
 		end
 		function Tab:SetLayoutOrder(Position)
@@ -5525,593 +5672,590 @@ local function OnPlayerChange()
 end
 Players.PlayerAdded:Connect(OnPlayerChange)
 Players.PlayerRemoving:Connect(OnPlayerChange)
-function Library:CreateSpeedGraph(Config)
-	Config = Config or {}
-	local SpeedGraph = {
-		Visible = true,
-		SpeedHistory = {},
-		Lines = {},
-		MaxHistory = math.max(2, Config.MaxHistory or 150),
-		MaxSpeed = math.max(1, Config.MaxSpeed or 200),
-		MinScale = math.max(1, Config.MinScale or 20),
-		AutoScale = Config.AutoScale ~= false,
-		Interval = Config.Interval or 0.05,
-		Thickness = Config.Thickness or 1,
-		LineColorIdx = Config.LineColorIdx or "FontColor",
-		Mode = Config.Mode or "Lines",
-		Clock = 0,
-	}
-	SpeedGraph.Scale = SpeedGraph.MinScale
-	local GraphOuter = Library:Create("Frame", {
-		BackgroundColor3 = Color3.new(0, 0, 0),
-		BorderColor3 = Color3.new(0, 0, 0),
-		BorderSizePixel = 0,
-		Position = Config.Position or UDim2.fromOffset(50, 50),
-		Size = Config.Size or UDim2.fromOffset(300, 200),
-		ZIndex = 50,
-		Parent = ScreenGui,
-	})
-	local GraphInner = Library:Create("Frame", {
-		BackgroundColor3 = Library.MainColor,
-		BorderColor3 = Library.AccentColor,
-		BorderMode = Enum.BorderMode.Inset,
-		Position = UDim2.new(0, 1, 0, 1),
-		Size = UDim2.new(1, -2, 1, -2),
-		ZIndex = 51,
-		Parent = GraphOuter,
-	})
-	Library:AddToRegistry(GraphInner, {
-		BackgroundColor3 = "MainColor",
-		BorderColor3 = "AccentColor",
-	})
-	Library:CreateLabel({
-		Position = UDim2.new(0, 7, 0, 0),
-		Size = UDim2.new(1, -14, 0, 20),
-		TextSize = 14,
-		Text = Config.Title or "Speed Graph",
-		TextXAlignment = Enum.TextXAlignment.Left,
-		ZIndex = 52,
-		Parent = GraphInner,
-	})
-	local VelocityLabel = Library:CreateLabel({
-		Position = UDim2.new(1, -107, 0, 0),
-		Size = UDim2.new(0, 100, 0, 20),
-		TextSize = 14,
-		Text = "Velocity: 0.0",
-		TextXAlignment = Enum.TextXAlignment.Right,
-		ZIndex = 52,
-		Parent = GraphInner,
-	})
-	local GraphAccentLine = Library:Create("Frame", {
-		BackgroundColor3 = Library.AccentColor,
-		BorderSizePixel = 0,
-		Position = UDim2.new(0, 0, 0, 20),
-		Size = UDim2.new(1, 0, 0, 1),
-		ZIndex = 53,
-		Parent = GraphInner,
-	})
-	Library:AddToRegistry(GraphAccentLine, {
-		BackgroundColor3 = "AccentColor",
-	})
-	local GraphFrame = Library:Create("Frame", {
-		BackgroundColor3 = Library.BackgroundColor,
-		BorderColor3 = Library.OutlineColor,
-		Position = UDim2.new(0, 8, 0, 25),
-		Size = UDim2.new(1, -16, 1, -33),
-		ClipsDescendants = true,
-		ZIndex = 51,
-		Parent = GraphInner,
-	})
-	local GraphContent = Library:Create("Frame", {
-		BackgroundColor3 = Library.BackgroundColor,
-		BorderColor3 = Color3.new(0, 0, 0),
-		BorderMode = Enum.BorderMode.Inset,
-		Size = UDim2.new(1, 0, 1, 0),
-		ZIndex = 51,
-		Parent = GraphFrame,
-	})
-	Library:AddToRegistry(GraphFrame, {
-		BackgroundColor3 = "BackgroundColor",
-		BorderColor3 = "OutlineColor",
-	})
-	Library:AddToRegistry(GraphContent, {
-		BackgroundColor3 = "BackgroundColor",
-		BorderColor3 = "Black",
-	})
-	local function BuildPool()
-		for Idx = #SpeedGraph.Lines, 1, -1 do
-			SpeedGraph.Lines[Idx]:Destroy()
-			SpeedGraph.Lines[Idx] = nil
-		end
-		for i = 1, SpeedGraph.MaxHistory do
-			local Line = Library:Create("Frame", {
-				BackgroundColor3 = Library[SpeedGraph.LineColorIdx],
-				BorderSizePixel = 0,
-				AnchorPoint = Vector2.new(0.5, 0.5),
-				Size = UDim2.fromOffset(1, SpeedGraph.Thickness),
-				Visible = false,
-				ZIndex = 52,
-				Parent = GraphContent,
-			})
-			Library:AddToRegistry(Line, {
-				BackgroundColor3 = SpeedGraph.LineColorIdx,
-			})
-			SpeedGraph.Lines[i] = Line
-		end
-	end
-	local function HideLines()
-		for i = 1, #SpeedGraph.Lines do
-			SpeedGraph.Lines[i].Visible = false
-		end
-	end
-	local function Redraw()
-		local Count = #SpeedGraph.SpeedHistory
-		local Size = GraphContent.AbsoluteSize
-		if Count < 1 or Size.X <= 0 or Size.Y <= 0 then
-			HideLines()
-			return
-		end
-		local Scale = SpeedGraph.MaxSpeed
-		if SpeedGraph.AutoScale then
-			local Peak = SpeedGraph.MinScale
-			for i = 1, Count do
-				if SpeedGraph.SpeedHistory[i] > Peak then
-					Peak = SpeedGraph.SpeedHistory[i]
-				end
-			end
-			SpeedGraph.Scale = SpeedGraph.Scale + (Peak - SpeedGraph.Scale) * 0.15
-			Scale = math.max(SpeedGraph.Scale, 1)
-		end
-		local Total = SpeedGraph.MaxHistory
-		local function ValueAt(i)
-			return math.clamp((SpeedGraph.SpeedHistory[i] or 0) / Scale, 0, 1)
-		end
-		if SpeedGraph.Mode == "Lines" then
-			local SlotW = Size.X / Total
-			local Offset = Size.X - Count * SlotW
-			for i = 1, #SpeedGraph.Lines do
-				local Line = SpeedGraph.Lines[i]
-				if i <= Count then
-					local Height = math.floor(ValueAt(i) * Size.Y)
-					Line.AnchorPoint = Vector2.new(0, 0)
-					Line.Rotation = 0
-					Line.Size = UDim2.fromOffset(math.max(1, math.ceil(SlotW)), Height)
-					Line.Position = UDim2.new(0, math.floor(Offset + (i - 1) * SlotW), 1, -Height)
-					Line.Visible = Height > 0
-				else
-					Line.Visible = false
-				end
-			end
-			return
-		end
-		local Step = Size.X / math.max(Total - 1, 1)
-		local Offset = Size.X - (Count - 1) * Step
-		local function PointAt(i)
-			return Offset + (i - 1) * Step, Size.Y - ValueAt(i) * Size.Y
-		end
-		if SpeedGraph.Mode == "Dots" then
-			local Dot = math.max(2, SpeedGraph.Thickness + 1)
-			local Half = Dot * 0.5
-			for i = 1, #SpeedGraph.Lines do
-				local Line = SpeedGraph.Lines[i]
-				if i <= Count then
-					local X, Y = PointAt(i)
-					Line.AnchorPoint = Vector2.new(0.5, 0.5)
-					Line.Rotation = 0
-					Line.Size = UDim2.fromOffset(Dot, Dot)
-					Line.Position = UDim2.fromOffset(
-						math.floor(X + 0.5),
-						math.floor(math.clamp(Y, Half, Size.Y - Half) + 0.5)
-					)
-					Line.Visible = true
-				else
-					Line.Visible = false
-				end
-			end
-			return
-		end
-		for i = 1, #SpeedGraph.Lines do
-			local Line = SpeedGraph.Lines[i]
-			if i < Count then
-				local X1, Y1 = PointAt(i)
-				local X2, Y2 = PointAt(i + 1)
-				local dX, dY = X2 - X1, Y2 - Y1
-				local Length = math.sqrt(dX * dX + dY * dY)
-				Line.AnchorPoint = Vector2.new(0.5, 0.5)
-				Line.Position = UDim2.fromOffset(math.floor((X1 + X2) * 0.5 + 0.5), math.floor((Y1 + Y2) * 0.5 + 0.5))
-				Line.Size = UDim2.fromOffset(math.max(1, math.ceil(Length)), SpeedGraph.Thickness)
-				Line.Rotation = math.deg(math.atan2(dY, dX))
-				Line.Visible = true
-			else
-				Line.Visible = false
-			end
-		end
-	end
-	function SpeedGraph:UpdateSpeed(Delta)
-		if not SpeedGraph.Visible then
-			return
-		end
-		local Character = LocalPlayer.Character
-		local Root = Character and Character:FindFirstChild("HumanoidRootPart")
-		if not Root then
-			return
-		end
-		local Velocity = Root.AssemblyLinearVelocity
-		local Speed = math.sqrt(Velocity.X * Velocity.X + Velocity.Z * Velocity.Z)
-		VelocityLabel.Text = string.format("Velocity: %.1f", Speed)
-		SpeedGraph.Clock = SpeedGraph.Clock + (Delta or 0)
-		if SpeedGraph.Clock < SpeedGraph.Interval then
-			return
-		end
-		SpeedGraph.Clock = 0
-		table.insert(SpeedGraph.SpeedHistory, Speed)
-		while #SpeedGraph.SpeedHistory > SpeedGraph.MaxHistory do
-			table.remove(SpeedGraph.SpeedHistory, 1)
-		end
-		Redraw()
-	end
-	function SpeedGraph:SetVisible(Bool)
-		SpeedGraph.Visible = not not Bool
-		GraphOuter.Visible = SpeedGraph.Visible
-		if not SpeedGraph.Visible then
-			table.clear(SpeedGraph.SpeedHistory)
-			SpeedGraph.Scale = SpeedGraph.MinScale
-			VelocityLabel.Text = "Velocity: 0.0"
-			HideLines()
-		end
-	end
-	function SpeedGraph:SetMaxHistory(Value)
-		SpeedGraph.MaxHistory = math.max(2, Value or 150)
-		while #SpeedGraph.SpeedHistory > SpeedGraph.MaxHistory do
-			table.remove(SpeedGraph.SpeedHistory, 1)
-		end
-		BuildPool()
-		Redraw()
-	end
-	function SpeedGraph:SetMaxSpeed(Value)
-		SpeedGraph.MaxSpeed = math.max(1, Value or 200)
-		Redraw()
-	end
-	function SpeedGraph:SetMode(Value)
-		SpeedGraph.Mode = Value or "Lines"
-		for i = 1, #SpeedGraph.Lines do
-			local Line = SpeedGraph.Lines[i]
-			Line.Rotation = 0
-			Line.AnchorPoint = Vector2.new(0, 0)
-			Line.Visible = false
-		end
-		Redraw()
-	end
-	function SpeedGraph:SetAutoScale(Bool)
-		SpeedGraph.AutoScale = not not Bool
-		Redraw()
-	end
-	function SpeedGraph:SetInterval(Value)
-		SpeedGraph.Interval = math.max(0, Value or 0.05)
-	end
-	function SpeedGraph:Destroy()
-		for Idx = #Library.SpeedGraphInstances, 1, -1 do
-			if Library.SpeedGraphInstances[Idx] == SpeedGraph then
-				table.remove(Library.SpeedGraphInstances, Idx)
-			end
-		end
-		GraphOuter:Destroy()
-	end
-	GraphContent:GetPropertyChangedSignal("AbsoluteSize"):Connect(Redraw)
-	Library:GiveSignal(RenderStepped:Connect(function(Delta)
-		if not GraphOuter.Visible then
-			return
-		end
-		SpeedGraph:UpdateSpeed(Delta)
-	end))
-	Library:MakeDraggable(GraphOuter, 25)
-	BuildPool()
-	SpeedGraph.Frame = GraphOuter
-	table.insert(Library.SpeedGraphInstances, SpeedGraph)
-	return SpeedGraph
+getgenv().Library = Library
+return Library
+end)()
+local ThemeManager = (function()
+local httpService = game:GetService('HttpService')
+
+local ThemeManager = {} do
+    ThemeManager.Folder = 'LinoraSettings'
+    ThemeManager.Library = nil
+    ThemeManager.DefaultTheme = 'Primordial'
+
+    ThemeManager.BuiltInThemes = {
+        ['Primordial']   = { 1, httpService:JSONDecode('{"FontColor":"ffffff","MainColor":"171717","AccentColor":"c2919c","BackgroundColor":"1c1c1c","OutlineColor":"323232"}') },
+        ['Aurora']       = { 2, httpService:JSONDecode('{"FontColor":"d7d7d7","MainColor":"0a0a0a","AccentColor":"c81919","BackgroundColor":"0a0a0a","OutlineColor":"000000"}') },
+        ['Grey']         = { 3, httpService:JSONDecode('{"FontColor":"a0a0a0","MainColor":"343434","AccentColor":"646464","BackgroundColor":"343232","OutlineColor":"505050"}') },
+        ['Purple']       = { 4, httpService:JSONDecode('{"FontColor":"ffffff","MainColor":"1c1c1c","AccentColor":"4400ff","BackgroundColor":"141414","OutlineColor":"323232"}') },
+        ['Blawhite']     = { 5, httpService:JSONDecode('{"FontColor":"ffffff","MainColor":"1c1c1c","AccentColor":"fbfafc","BackgroundColor":"050505","OutlineColor":"323232"}') },
+        ['Light Cyan']   = { 6, httpService:JSONDecode('{"FontColor":"ffffff","MainColor":"1c1c1c","AccentColor":"0092ff","BackgroundColor":"141414","OutlineColor":"323232"}') },
+        ['BBot']         = { 7, httpService:JSONDecode('{"FontColor":"ffffff","MainColor":"1e1e1e","AccentColor":"7e48a3","BackgroundColor":"232323","OutlineColor":"141414"}') },
+        ['Fatality']     = { 8, httpService:JSONDecode('{"FontColor":"ffffff","MainColor":"1e1842","AccentColor":"c50754","BackgroundColor":"191335","OutlineColor":"3c355d"}') },
+        ['Jester']       = { 9, httpService:JSONDecode('{"FontColor":"ffffff","MainColor":"242424","AccentColor":"db4467","BackgroundColor":"1c1c1c","OutlineColor":"373737"}') },
+        ['Mint']         = { 10, httpService:JSONDecode('{"FontColor":"ffffff","MainColor":"242424","AccentColor":"3db488","BackgroundColor":"1c1c1c","OutlineColor":"373737"}') },
+        ['Tokyo Night']  = { 11, httpService:JSONDecode('{"FontColor":"ffffff","MainColor":"191925","AccentColor":"6759b3","BackgroundColor":"16161f","OutlineColor":"323232"}') },
+        ['Ubuntu']       = { 12, httpService:JSONDecode('{"FontColor":"ffffff","MainColor":"3e3e3e","AccentColor":"e2581e","BackgroundColor":"323232","OutlineColor":"191919"}') },
+        ['Quartz']       = { 13, httpService:JSONDecode('{"FontColor":"ffffff","MainColor":"232330","AccentColor":"426e87","BackgroundColor":"1d1b26","OutlineColor":"27232f"}') },
+        ['Lace']         = { 14, httpService:JSONDecode('{"FontColor":"a3abb2","MainColor":"201a1e","AccentColor":"e390bf","BackgroundColor":"171215","OutlineColor":"312e2e"}') },
+        ['Mahogany']     = { 15, httpService:JSONDecode('{"FontColor":"c7c7c8","MainColor":"291010","AccentColor":"8c3535","BackgroundColor":"1b0a0a","OutlineColor":"312e2e"}') },
+        ['Silver Lake']  = { 16, httpService:JSONDecode('{"FontColor":"c7c7c8","MainColor":"1b1e24","AccentColor":"5471bc","BackgroundColor":"121317","OutlineColor":"312e2e"}') },
+        ['Slate']        = { 17, httpService:JSONDecode('{"FontColor":"8388aa","MainColor":"171717","AccentColor":"8388aa","BackgroundColor":"171717","OutlineColor":"2c2c2c"}') },
+        ['White Angel']  = { 18, httpService:JSONDecode('{"FontColor":"f0f0f0","MainColor":"3a3a3a","AccentColor":"939393","BackgroundColor":"212121","OutlineColor":"808080"}') },
+        ['Cyan Tokyo']   = { 19, httpService:JSONDecode('{"FontColor":"9bd5d0","MainColor":"769e9c","AccentColor":"07d8c5","BackgroundColor":"66938d","OutlineColor":"44756e"}') },
+        ['Crimson Red']  = { 20, httpService:JSONDecode('{"FontColor":"751f1f","MainColor":"2e0606","AccentColor":"ce3737","BackgroundColor":"201010","OutlineColor":"6f2424"}') },
+        ['Tokyo Purple'] = { 21, httpService:JSONDecode('{"FontColor":"782dd8","MainColor":"240f3d","AccentColor":"3e1067","BackgroundColor":"331755","OutlineColor":"680edb"}') },
+        ['Greyrat']      = { 22, httpService:JSONDecode('{"MainColor":"363636","AccentColor":"4f4f4f","OutlineColor":"444444","BackgroundColor":"292929","FontColor":"ffffff"}') },
+        ['Karuta']       = { 23, httpService:JSONDecode('{"FontColor":"ffffff","MainColor":"1c1c1c","AccentColor":"ff912b","BackgroundColor":"141414","OutlineColor":"323232"}') },
+        ['Villan']       = { 24, httpService:JSONDecode('{"MainColor":"221a27","AccentColor":"423149","OutlineColor":"3a2d40","BackgroundColor":"211824","FontColor":"ffffff"}') },
+    }
+
+    function ThemeManager:ApplyTheme(theme)
+        local customThemeData = self:GetCustomTheme(theme)
+        local data = customThemeData or self.BuiltInThemes[theme]
+
+        if not data then return end
+
+        local scheme = data.objects or data[2]
+        for idx, col in next, customThemeData or scheme do
+            self.Library[idx] = Color3.fromHex(col)
+
+            if self.Library.Options[idx] then
+                self.Library.Options[idx]:SetValueRGB(Color3.fromHex(col))
+            end
+        end
+
+        self:ThemeUpdate()
+    end
+
+    function ThemeManager:ThemeUpdate()
+        local options = { "FontColor", "MainColor", "AccentColor", "BackgroundColor", "OutlineColor" }
+        for i, field in next, options do
+            if self.Library.Options and self.Library.Options[field] then
+                self.Library[field] = self.Library.Options[field].Value
+            end
+        end
+
+        self.Library.AccentColorDark = self.Library:GetDarkerColor(self.Library.AccentColor);
+        self.Library:UpdateColorsUsingRegistry()
+    end
+
+    function ThemeManager:LoadDefault()
+        local theme = self.DefaultTheme or 'Primordial'
+        local content = isfile(self.Folder .. '/themes/default.txt') and readfile(self.Folder .. '/themes/default.txt')
+
+        local isDefault = true
+        if content then
+            if self.BuiltInThemes[content] then
+                theme = content
+            elseif self:GetCustomTheme(content) then
+                theme = content
+                isDefault = false;
+            end
+        elseif self.BuiltInThemes[self.DefaultTheme] then
+            theme = self.DefaultTheme
+        end
+
+        if isDefault then
+            self.Library.Options.ThemeManager_ThemeList:SetValue(theme)
+        else
+            self:ApplyTheme(theme)
+        end
+    end
+
+    function ThemeManager:SaveDefault(theme)
+        writefile(self.Folder .. '/themes/default.txt', theme)
+    end
+
+    function ThemeManager:CreateThemeManager(groupbox)
+        groupbox:AddLabel('Background color'):AddColorPicker('BackgroundColor', { Default = self.Library.BackgroundColor });
+        groupbox:AddLabel('Main color')      :AddColorPicker('MainColor', { Default = self.Library.MainColor });
+        groupbox:AddLabel('Accent color')    :AddColorPicker('AccentColor', { Default = self.Library.AccentColor });
+        groupbox:AddLabel('Outline color')   :AddColorPicker('OutlineColor', { Default = self.Library.OutlineColor });
+        groupbox:AddLabel('Font color')      :AddColorPicker('FontColor', { Default = self.Library.FontColor });
+
+        local ThemesArray = {}
+        for Name, Theme in next, self.BuiltInThemes do
+            table.insert(ThemesArray, Name)
+        end
+
+        table.sort(ThemesArray, function(a, b) return self.BuiltInThemes[a][1] < self.BuiltInThemes[b][1] end)
+
+        groupbox:AddDivider()
+        groupbox:AddDropdown('ThemeManager_ThemeList', { Text = 'Theme list', Values = ThemesArray, Default = 1 })
+
+        groupbox:AddButton('Set as default', function()
+            self:SaveDefault(self.Library.Options.ThemeManager_ThemeList.Value)
+            self.Library:Notify(string.format('Set default theme to %q', self.Library.Options.ThemeManager_ThemeList.Value))
+        end)
+
+        self.Library.Options.ThemeManager_ThemeList:OnChanged(function()
+            self:ApplyTheme(self.Library.Options.ThemeManager_ThemeList.Value)
+        end)
+
+        groupbox:AddDivider()
+        groupbox:AddInput('ThemeManager_CustomThemeName', { Text = 'Custom theme name' })
+        groupbox:AddDropdown('ThemeManager_CustomThemeList', { Text = 'Custom themes', Values = self:ReloadCustomThemes(), AllowNull = true, Default = 1 })
+
+        groupbox:AddDivider()
+
+        groupbox:AddButton('Create theme', function()
+            local name = self.Library.Options.ThemeManager_CustomThemeName.Value
+
+            if name == nil or name == '' then
+                return self.Library:Notify('Invalid theme name!')
+            end
+
+            self:SaveCustomTheme(name)
+
+            self.Library.Options.ThemeManager_CustomThemeList:SetValues(self:ReloadCustomThemes())
+            self.Library.Options.ThemeManager_CustomThemeList:SetValue(nil)
+        end):AddButton('Load theme', function()
+            local name = self.Library.Options.ThemeManager_CustomThemeList.Value
+            self:ApplyTheme(name)
+            self.Library:Notify(string.format('Loaded theme %q', name))
+        end)
+
+        groupbox:AddButton('Overwrite theme', function()
+            local name = self.Library.Options.ThemeManager_CustomThemeList.Value
+            self:SaveCustomTheme(name)
+            self.Library:Notify(string.format('Overwrote theme %q', name))
+        end)
+
+        groupbox:AddButton('Delete theme', function()
+            local name = self.Library.Options.ThemeManager_CustomThemeList.Value
+
+            if not name then
+                return self.Library:Notify('No theme selected!')
+            end
+
+            if isfile(self.Folder .. '/themes/' .. name .. '.txt') then
+                delfile(self.Folder .. '/themes/' .. name .. '.txt')
+            end
+
+            self.Library.Options.ThemeManager_CustomThemeList:SetValues(self:ReloadCustomThemes())
+            self.Library.Options.ThemeManager_CustomThemeList:SetValue(nil)
+        end)
+
+        groupbox:AddButton('Refresh list', function()
+            self.Library.Options.ThemeManager_CustomThemeList:SetValues(self:ReloadCustomThemes())
+            self.Library.Options.ThemeManager_CustomThemeList:SetValue(nil)
+        end)
+
+        groupbox:AddButton('Set as default', function()
+            if self.Library.Options.ThemeManager_CustomThemeList.Value ~= nil and self.Library.Options.ThemeManager_CustomThemeList.Value ~= '' then
+                self:SaveDefault(self.Library.Options.ThemeManager_CustomThemeList.Value)
+                self.Library:Notify(string.format('Set default theme to %q', self.Library.Options.ThemeManager_CustomThemeList.Value))
+            end
+        end)
+
+        ThemeManager:LoadDefault()
+
+        local function UpdateTheme()
+            self:ThemeUpdate()
+        end
+
+        self.Library.Options.BackgroundColor:OnChanged(UpdateTheme)
+        self.Library.Options.MainColor:OnChanged(UpdateTheme)
+        self.Library.Options.AccentColor:OnChanged(UpdateTheme)
+        self.Library.Options.OutlineColor:OnChanged(UpdateTheme)
+        self.Library.Options.FontColor:OnChanged(UpdateTheme)
+    end
+
+    function ThemeManager:GetCustomTheme(file)
+        local path = self.Folder .. '/themes/' .. file .. '.txt'
+        if not isfile(path) then
+            return nil
+        end
+
+        local data = readfile(path)
+        local success, decoded = pcall(httpService.JSONDecode, httpService, data)
+
+        if not success then
+            return nil
+        end
+
+        return decoded
+    end
+
+    function ThemeManager:SaveCustomTheme(file)
+        local theme = {}
+        local fields = { "FontColor", "MainColor", "AccentColor", "BackgroundColor", "OutlineColor" }
+
+        for _, field in next, fields do
+            theme[field] = self.Library.Options[field].Value:ToHex()
+        end
+
+        writefile(self.Folder .. '/themes/' .. file .. '.txt', httpService:JSONEncode(theme))
+    end
+
+    function ThemeManager:ReloadCustomThemes()
+        local list = listfiles(self.Folder .. '/themes')
+
+        local out = {}
+        for i = 1, #list do
+            local file = list[i]
+            if file:sub(-4) == '.txt' then
+
+                local pos = file:find('.txt', 1, true)
+                local char = file:sub(pos, pos)
+
+                while char ~= '/' and char ~= '\\' and char ~= '' do
+                    pos = pos - 1
+                    char = file:sub(pos, pos)
+                end
+
+                if char == '/' or char == '\\' then
+                    table.insert(out, file:sub(pos + 1, #file - 4))
+                end
+            end
+        end
+
+        return out
+    end
+
+    function ThemeManager:SetLibrary(library)
+        self.Library = library
+        self.Options = library and library.Options or nil
+    end
+
+    function ThemeManager:BuildFolderTree()
+        local paths = {}
+
+        local parts = self.Folder:split('/')
+        for idx = 1, #parts do
+            paths[#paths + 1] = table.concat(parts, '/', 1, idx)
+        end
+
+        table.insert(paths, self.Folder .. '/themes')
+        table.insert(paths, self.Folder .. '/settings')
+
+        for i = 1, #paths do
+            local str = paths[i]
+            if not isfolder(str) then
+                makefolder(str)
+            end
+        end
+    end
+
+    function ThemeManager:SetFolder(folder)
+        self.Folder = folder
+        self:BuildFolderTree()
+    end
+
+    function ThemeManager:CreateGroupBox(tab)
+        assert(self.Library, 'Must set ThemeManager.Library first!')
+        return tab:AddLeftGroupbox('Themes')
+    end
+
+    function ThemeManager:ApplyToTab(tab)
+        assert(self.Library, 'Must set ThemeManager.Library first!')
+        local groupbox = self:CreateGroupBox(tab)
+        self:CreateThemeManager(groupbox)
+    end
+
+    function ThemeManager:ApplyToGroupbox(groupbox)
+        assert(self.Library, 'Must set ThemeManager.Library first!')
+        self:CreateThemeManager(groupbox)
+    end
+
+    ThemeManager:BuildFolderTree()
 end
-function Library:CreateIndicator(Config)
-	Config = Config or {}
-	local Indicator = {
-		Visible = true,
-		Target = nil,
-		Rows = Config.Rows or {},
-		RowObjects = {},
-		ShowAvatar = Config.ShowAvatar ~= false,
-		AvatarSize = Config.AvatarSize or 78,
-		Width = Config.Width or 300,
-	}
-	local Outer = Library:Create("Frame", {
-		BackgroundColor3 = Color3.new(0, 0, 0),
-		BorderColor3 = Color3.new(0, 0, 0),
-		BorderSizePixel = 0,
-		Position = Config.Position or UDim2.fromOffset(50, 500),
-		Size = UDim2.fromOffset(Indicator.Width, 120),
-		ZIndex = 60,
-		Parent = ScreenGui,
-	})
-	Library:CreateGlow(Outer, {
-		Size = 24,
-		ZIndex = 59,
-	})
-	local Inner = Library:Create("Frame", {
-		BackgroundColor3 = Library.MainColor,
-		BorderColor3 = Library.AccentColor,
-		BorderMode = Enum.BorderMode.Inset,
-		Position = UDim2.new(0, 1, 0, 1),
-		Size = UDim2.new(1, -2, 1, -2),
-		ZIndex = 61,
-		Parent = Outer,
-	})
-	Library:AddToRegistry(Inner, {
-		BackgroundColor3 = "MainColor",
-		BorderColor3 = "AccentColor",
-	})
-	local TitleLabel = Library:CreateLabel({
-		Position = UDim2.new(0, 7, 0, 0),
-		Size = UDim2.new(1, -14, 0, 20),
-		TextSize = 14,
-		Text = Config.Title or "Target",
-		TextXAlignment = Enum.TextXAlignment.Left,
-		ZIndex = 63,
-		Parent = Inner,
-	})
-	local AccentLine = Library:Create("Frame", {
-		BackgroundColor3 = Library.AccentColor,
-		BorderSizePixel = 0,
-		Position = UDim2.new(0, 0, 0, 20),
-		Size = UDim2.new(1, 0, 0, 1),
-		ZIndex = 63,
-		Parent = Inner,
-	})
-	Library:AddToRegistry(AccentLine, {
-		BackgroundColor3 = "AccentColor",
-	})
-	local Body = Library:Create("Frame", {
-		BackgroundTransparency = 1,
-		Position = UDim2.new(0, 7, 0, 26),
-		Size = UDim2.new(1, -14, 1, -33),
-		ZIndex = 61,
-		Parent = Inner,
-	})
-	local AvatarOuter = Library:Create("Frame", {
-		BackgroundColor3 = Color3.new(0, 0, 0),
-		BorderSizePixel = 0,
-		Size = UDim2.fromOffset(Indicator.AvatarSize, Indicator.AvatarSize),
-		ZIndex = 62,
-		Parent = Body,
-	})
-	local AvatarInner = Library:Create("Frame", {
-		BackgroundColor3 = Library.BackgroundColor,
-		BorderColor3 = Library.OutlineColor,
-		BorderMode = Enum.BorderMode.Inset,
-		ClipsDescendants = true,
-		Position = UDim2.new(0, 1, 0, 1),
-		Size = UDim2.new(1, -2, 1, -2),
-		ZIndex = 62,
-		Parent = AvatarOuter,
-	})
-	Library:AddToRegistry(AvatarInner, {
-		BackgroundColor3 = "BackgroundColor",
-		BorderColor3 = "OutlineColor",
-	})
-	local AvatarImage = Library:Create("ImageLabel", {
-		BackgroundTransparency = 1,
-		BorderSizePixel = 0,
-		Image = "",
-		ScaleType = Enum.ScaleType.Crop,
-		Size = UDim2.new(1, 0, 1, 0),
-		ZIndex = 63,
-		Parent = AvatarInner,
-	})
-	local RowHolder = Library:Create("Frame", {
-		BackgroundTransparency = 1,
-		ZIndex = 62,
-		Parent = Body,
-	})
-	Library:Create("UIListLayout", {
-		Padding = UDim.new(0, 2),
-		FillDirection = Enum.FillDirection.Vertical,
-		SortOrder = Enum.SortOrder.LayoutOrder,
-		Parent = RowHolder,
-	})
-	local ROW_HEIGHT = { Bar = 15, Text = 14 }
-	local function BuildTextRow()
-		local Row = { Type = "Text" }
-		Row.Frame = Library:Create("Frame", {
-			BackgroundTransparency = 1,
-			Size = UDim2.new(1, 0, 0, ROW_HEIGHT.Text),
-			ZIndex = 62,
-			Parent = RowHolder,
-		})
-		Row.Label = Library:CreateLabel({
-			Size = UDim2.new(1, 0, 1, 0),
-			TextSize = 13,
-			Text = "",
-			TextXAlignment = Enum.TextXAlignment.Left,
-			TextTruncate = Enum.TextTruncate.AtEnd,
-			ZIndex = 63,
-			Parent = Row.Frame,
-		})
-		return Row
-	end
-	local function BuildBarRow()
-		local Row = { Type = "Bar" }
-		Row.Frame = Library:Create("Frame", {
-			BackgroundColor3 = Color3.new(0, 0, 0),
-			BorderSizePixel = 0,
-			Size = UDim2.new(1, 0, 0, ROW_HEIGHT.Bar),
-			ZIndex = 62,
-			Parent = RowHolder,
-		})
-		local Trough = Library:Create("Frame", {
-			BackgroundColor3 = Library.BackgroundColor,
-			BorderColor3 = Library.OutlineColor,
-			BorderMode = Enum.BorderMode.Inset,
-			ClipsDescendants = true,
-			Position = UDim2.new(0, 1, 0, 1),
-			Size = UDim2.new(1, -2, 1, -2),
-			ZIndex = 62,
-			Parent = Row.Frame,
-		})
-		Library:AddToRegistry(Trough, {
-			BackgroundColor3 = "BackgroundColor",
-			BorderColor3 = "OutlineColor",
-		})
-		Row.Fill = Library:Create("Frame", {
-			BackgroundColor3 = Library.AccentColor,
-			BorderSizePixel = 0,
-			Size = UDim2.new(1, 0, 1, 0),
-			ZIndex = 63,
-			Parent = Trough,
-		})
-		Row.Registered = true
-		Library:AddToRegistry(Row.Fill, {
-			BackgroundColor3 = "AccentColor",
-		})
-		Row.Label = Library:CreateLabel({
-			Size = UDim2.new(1, 0, 1, 0),
-			TextSize = 12,
-			Text = "",
-			TextXAlignment = Enum.TextXAlignment.Center,
-			ZIndex = 64,
-			Parent = Trough,
-		})
-		return Row
-	end
-	local function ClearRows()
-		for Idx = #Indicator.RowObjects, 1, -1 do
-			local Row = Indicator.RowObjects[Idx]
-			if Row.Registered and Row.Fill then
-				Library:RemoveFromRegistry(Row.Fill)
-			end
-			Row.Frame:Destroy()
-			Indicator.RowObjects[Idx] = nil
-		end
-	end
-	local function Resize()
-		local Height = 0
-		for Idx = 1, #Indicator.Rows do
-			local Def = Indicator.Rows[Idx]
-			Height = Height + (ROW_HEIGHT[Def.Type or "Text"] or ROW_HEIGHT.Text) + 2
-		end
-		Height = math.max(Height - 2, 0)
-		local AvatarWidth = Indicator.ShowAvatar and Indicator.AvatarSize + 8 or 0
-		AvatarOuter.Visible = Indicator.ShowAvatar
-		AvatarOuter.Size = UDim2.fromOffset(Indicator.AvatarSize, Indicator.AvatarSize)
-		RowHolder.Position = UDim2.new(0, AvatarWidth, 0, 0)
-		RowHolder.Size = UDim2.new(1, -AvatarWidth, 0, Height)
-		local Content = math.max(Height, Indicator.ShowAvatar and Indicator.AvatarSize or 0)
-		Outer.Size = UDim2.fromOffset(Indicator.Width, Content + 33)
-	end
-	local function Rebuild()
-		ClearRows()
-		for Idx = 1, #Indicator.Rows do
-			local Def = Indicator.Rows[Idx]
-			local Row = Def.Type == "Bar" and BuildBarRow() or BuildTextRow()
-			Row.Get = Def.Get
-			Row.Format = Def.Format
-			Row.Text = Def.Text
-			Row.Color = Def.Color
-			if Row.Type == "Bar" and Def.Color then
-				Library:RemoveFromRegistry(Row.Fill)
-				Row.Registered = false
-				Row.Fill.BackgroundColor3 = Def.Color
-			end
-			Indicator.RowObjects[Idx] = Row
-		end
-		Resize()
-	end
-	local function Refresh()
-		local Target = Indicator.Target
-		for Idx = 1, #Indicator.RowObjects do
-			local Row = Indicator.RowObjects[Idx]
-			if not Row.Get then
-				Row.Frame.Visible = false
-			elseif Row.Type == "Bar" then
-				local Ok, Value, Max, Color = pcall(Row.Get, Target)
-				if not Ok or type(Value) ~= "number" then
-					Row.Frame.Visible = false
-				else
-					Max = type(Max) == "number" and Max or 100
-					local Fraction = math.clamp(Value / math.max(Max, 1), 0, 1)
-					Row.Frame.Visible = true
-					Row.Fill.Size = UDim2.new(Fraction, 0, 1, 0)
-					if Color then
-						Row.Fill.BackgroundColor3 = Color
-					end
-					Row.Label.Text = Row.Format
-							and string.format(Row.Format, Value, Max)
-						or string.format("%s%d/%d", Row.Text and Row.Text .. " " or "", Value + 0.5, Max + 0.5)
-				end
-			else
-				local Ok, Text, Color = pcall(Row.Get, Target)
-				if not Ok or Text == nil then
-					Row.Frame.Visible = false
-				else
-					Row.Frame.Visible = true
-					Row.Label.Text = tostring(Text)
-					Row.Label.TextColor3 = Color or Row.Color or Library.FontColor
-				end
-			end
-		end
-	end
-	function Indicator:SetTitle(Text)
-		TitleLabel.Text = Text or "Target"
-	end
-	function Indicator:SetTarget(Target)
-		Indicator.Target = Target
-		if Target and typeof(Target) == "Instance" and Target:IsA("Player") then
-			AvatarImage.Image = "rbxthumb://type=AvatarHeadShot&id=" .. Target.UserId .. "&w=150&h=150"
-		else
-			AvatarImage.Image = ""
-		end
-		Refresh()
-	end
-	function Indicator:ClearTarget()
-		Indicator:SetTarget(nil)
-	end
-	function Indicator:GetTarget()
-		return Indicator.Target
-	end
-	function Indicator:SetVisible(Bool)
-		Indicator.Visible = not not Bool
-		Outer.Visible = Indicator.Visible
-	end
-	function Indicator:SetRows(Rows)
-		Indicator.Rows = Rows or {}
-		Rebuild()
-		Refresh()
-	end
-	function Indicator:SetShowAvatar(Bool)
-		Indicator.ShowAvatar = not not Bool
-		Resize()
-	end
-	function Indicator:SetWidth(Value)
-		Indicator.Width = math.max(120, Value or 300)
-		Resize()
-	end
-	function Indicator:Destroy()
-		for Idx = #Library.IndicatorInstances, 1, -1 do
-			if Library.IndicatorInstances[Idx] == Indicator then
-				table.remove(Library.IndicatorInstances, Idx)
-			end
-		end
-		Library.MenuOnlyDrag[Outer] = nil
-		Outer:Destroy()
-	end
-	Library:GiveSignal(RenderStepped:Connect(function()
-		if not Outer.Visible then
-			return
-		end
-		Refresh()
-	end))
-	Library.MenuOnlyDrag[Outer] = true
-	Library:MakeDraggable(Outer, 26)
-	Rebuild()
-	Indicator.Frame = Outer
-	table.insert(Library.IndicatorInstances, Indicator)
-	return Indicator
+
+return ThemeManager
+end)()
+local SaveManager = (function()
+local httpService = game:GetService('HttpService')
+
+local SaveManager = {} do
+    SaveManager.Folder = 'LinoraSettings'
+    SaveManager.Ignore = {}
+    SaveManager.Parser = {
+        Toggle = {
+            Save = function(idx, object)
+                return { type = 'Toggle', idx = idx, value = object.Value }
+            end,
+            Load = function(idx, data)
+                if SaveManager.Options[idx] then
+                    SaveManager.Options[idx]:SetValue(data.value)
+                end
+            end,
+        },
+        Slider = {
+            Save = function(idx, object)
+                return { type = 'Slider', idx = idx, value = tostring(object.Value) }
+            end,
+            Load = function(idx, data)
+                if SaveManager.Options[idx] then
+                    SaveManager.Options[idx]:SetValue(data.value)
+                end
+            end,
+        },
+        Dropdown = {
+            Save = function(idx, object)
+                return { type = 'Dropdown', idx = idx, value = object.Value, mutli = object.Multi }
+            end,
+            Load = function(idx, data)
+                if SaveManager.Options[idx] then
+                    SaveManager.Options[idx]:SetValue(data.value)
+                end
+            end,
+        },
+        ColorPicker = {
+            Save = function(idx, object)
+                return { type = 'ColorPicker', idx = idx, value = object.Value:ToHex(), transparency = object.Transparency }
+            end,
+            Load = function(idx, data)
+                if SaveManager.Options[idx] then
+                    SaveManager.Options[idx]:SetValueRGB(Color3.fromHex(data.value), data.transparency)
+                end
+            end,
+        },
+        KeyPicker = {
+            Save = function(idx, object)
+                return { type = 'KeyPicker', idx = idx, mode = object.Mode, key = object.Value }
+            end,
+            Load = function(idx, data)
+                if SaveManager.Options[idx] then
+                    SaveManager.Options[idx]:SetValue({ data.key, data.mode })
+                end
+            end,
+        },
+        Input = {
+            Save = function(idx, object)
+                return { type = 'Input', idx = idx, text = object.Value }
+            end,
+            Load = function(idx, data)
+                if SaveManager.Options[idx] and type(data.text) == 'string' then
+                    SaveManager.Options[idx]:SetValue(data.text)
+                end
+            end,
+        },
+        Listbox = {
+            Save = function(idx, object)
+                local value = object.Value
+
+                if object.Multi then
+                    local picked = {}
+
+                    for name, state in next, value or {} do
+                        if state then
+                            table.insert(picked, name)
+                        end
+                    end
+
+                    table.sort(picked)
+                    value = picked
+                end
+
+                return { type = 'Listbox', idx = idx, value = value, multi = object.Multi }
+            end,
+            Load = function(idx, data)
+                if SaveManager.Options[idx] then
+                    SaveManager.Options[idx]:SetValue(data.value)
+                end
+            end,
+        },
+    }
+
+    function SaveManager:SetIgnoreIndexes(list)
+        for _, key in next, list do
+            self.Ignore[key] = true
+        end
+    end
+
+    function SaveManager:SetFolder(folder)
+        self.Folder = folder;
+        self:BuildFolderTree()
+    end
+
+    function SaveManager:Save(name)
+        if (not name) then
+            return false, 'no config file is selected'
+        end
+
+        local fullPath = self.Folder .. '/settings/' .. name .. '.json'
+
+        local data = {
+            objects = {}
+        }
+
+        for idx, option in next, SaveManager.Options do
+            if not self.Parser[option.Type] then continue end
+            if self.Ignore[idx] then continue end
+
+            table.insert(data.objects, self.Parser[option.Type].Save(idx, option))
+        end
+
+        local success, encoded = pcall(httpService.JSONEncode, httpService, data)
+        if not success then
+            return false, 'failed to encode data'
+        end
+
+        writefile(fullPath, encoded)
+        return true
+    end
+
+    function SaveManager:Load(name)
+        if (not name) then
+            return false, 'no config file is selected'
+        end
+
+        local file = self.Folder .. '/settings/' .. name .. '.json'
+        if not isfile(file) then return false, 'invalid file' end
+
+        local success, decoded = pcall(httpService.JSONDecode, httpService, readfile(file))
+        if not success then return false, 'decode error' end
+
+        for _, option in next, decoded.objects do
+            if self.Parser[option.type] then
+                task.spawn(function() self.Parser[option.type].Load(option.idx, option) end)
+            end
+        end
+
+        return true
+    end
+
+    function SaveManager:IgnoreThemeSettings()
+        self:SetIgnoreIndexes({
+            "BackgroundColor", "MainColor", "AccentColor", "OutlineColor", "FontColor",
+            "ThemeManager_ThemeList", 'ThemeManager_CustomThemeList', 'ThemeManager_CustomThemeName',
+        })
+    end
+
+    function SaveManager:BuildFolderTree()
+        local paths = {
+            self.Folder,
+            self.Folder .. '/themes',
+            self.Folder .. '/settings'
+        }
+
+        for i = 1, #paths do
+            local str = paths[i]
+            if not isfolder(str) then
+                makefolder(str)
+            end
+        end
+    end
+
+    function SaveManager:RefreshConfigList()
+        local list = listfiles(self.Folder .. '/settings')
+
+        local out = {}
+        for i = 1, #list do
+            local file = list[i]
+            if file:sub(-5) == '.json' then
+
+                local pos = file:find('.json', 1, true)
+                local char = file:sub(pos, pos)
+
+                while char ~= '/' and char ~= '\\' and char ~= '' do
+                    pos = pos - 1
+                    char = file:sub(pos, pos)
+                end
+
+                if char == '/' or char == '\\' then
+                    table.insert(out, file:sub(pos + 1, #file - 5))
+                end
+            end
+        end
+
+        return out
+    end
+
+    function SaveManager:SetLibrary(library)
+        self.Library = library
+        self.Options = library.Options
+        self.Toggles = library.Toggles
+    end
+
+    function SaveManager:LoadAutoloadConfig()
+        if isfile(self.Folder .. '/settings/autoload.txt') then
+            local name = readfile(self.Folder .. '/settings/autoload.txt')
+
+            local success, err = self:Load(name)
+            if not success then
+                return self.Library:Notify('Failed to load autoload config: ' .. err)
+            end
+
+            self.Library:Notify(string.format('Auto loaded config %q', name))
+        end
+    end
+
+    function SaveManager:BuildConfigSection(tab)
+        assert(self.Library, 'Must set SaveManager.Library first!')
+
+        local section = tab:AddRightGroupbox('Configuration')
+
+        section:AddInput('SaveManager_ConfigName',    { Text = 'Config name' })
+        section:AddDropdown('SaveManager_ConfigList', { Text = 'Config list', Values = self:RefreshConfigList(), AllowNull = true })
+
+        section:AddDivider()
+
+        section:AddButton('Create config', function()
+            local name = self.Options.SaveManager_ConfigName.Value
+
+            if name:gsub(' ', '') == '' then
+                return self.Library:Notify('Invalid config name (empty)', 2)
+            end
+
+            local success, err = self:Save(name)
+            if not success then
+                return self.Library:Notify('Failed to save config: ' .. err)
+            end
+
+            self.Library:Notify(string.format('Created config %q', name))
+
+            self.Options.SaveManager_ConfigList:SetValues(self:RefreshConfigList())
+            self.Options.SaveManager_ConfigList:SetValue(nil)
+        end):AddButton('Load config', function()
+            local name = self.Options.SaveManager_ConfigList.Value
+
+            local success, err = self:Load(name)
+            if not success then
+                return self.Library:Notify('Failed to load config: ' .. err)
+            end
+
+            self.Library:Notify(string.format('Loaded config %q', name))
+        end)
+
+        section:AddButton('Overwrite config', function()
+            local name = self.Options.SaveManager_ConfigList.Value
+
+            local success, err = self:Save(name)
+            if not success then
+                return self.Library:Notify('Failed to overwrite config: ' .. err)
+            end
+
+            self.Library:Notify(string.format('Overwrote config %q', name))
+        end)
+
+        section:AddButton('Refresh list', function()
+            self.Options.SaveManager_ConfigList:SetValues(self:RefreshConfigList())
+            self.Options.SaveManager_ConfigList:SetValue(nil)
+        end)
+
+        section:AddButton('Set as autoload', function()
+            local name = self.Options.SaveManager_ConfigList.Value
+            writefile(self.Folder .. '/settings/autoload.txt', name)
+            SaveManager.AutoloadLabel:SetText('Current autoload config: ' .. name)
+            self.Library:Notify(string.format('Set %q to auto load', name))
+        end)
+
+        SaveManager.AutoloadLabel = section:AddLabel('Current autoload config: none', true)
+
+        if isfile(self.Folder .. '/settings/autoload.txt') then
+            local name = readfile(self.Folder .. '/settings/autoload.txt')
+            SaveManager.AutoloadLabel:SetText('Current autoload config: ' .. name)
+        end
+
+        SaveManager:SetIgnoreIndexes({ 'SaveManager_ConfigList', 'SaveManager_ConfigName' })
+    end
+
+    SaveManager:BuildFolderTree()
 end
+
+return SaveManager
+end)()
 getgenv().Library = Library
 return Library
