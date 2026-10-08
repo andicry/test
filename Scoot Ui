@@ -289,22 +289,33 @@ local Library do
             return NewTween
         end
 
+        local PropertyCache = { }
+
         Tween.GetProperty = function(self, Item)
-            Item = Item or self.Item 
+            local Cached = PropertyCache[Item.ClassName]
+
+            if Cached ~= nil then 
+                return Cached == false and nil or Cached
+            end
+
+            local Properties
 
             if Item:IsA("Frame") then
-                return { "BackgroundTransparency" }
+                Properties = { "BackgroundTransparency" }
             elseif Item:IsA("TextLabel") or Item:IsA("TextButton") then
-                return { "TextTransparency", "BackgroundTransparency" }
+                Properties = { "TextTransparency", "BackgroundTransparency" }
             elseif Item:IsA("ImageLabel") or Item:IsA("ImageButton") then
-                return { "BackgroundTransparency", "ImageTransparency" }
+                Properties = { "BackgroundTransparency", "ImageTransparency" }
             elseif Item:IsA("ScrollingFrame") then
-                return { "BackgroundTransparency", "ScrollBarImageTransparency" }
+                Properties = { "BackgroundTransparency", "ScrollBarImageTransparency" }
             elseif Item:IsA("TextBox") then
-                return { "TextTransparency", "BackgroundTransparency" }
+                Properties = { "TextTransparency", "BackgroundTransparency" }
             elseif Item:IsA("UIStroke") then 
-                return { "Transparency" }
+                Properties = { "Transparency" }
             end
+
+            PropertyCache[Item.ClassName] = Properties or false
+            return Properties
         end
 
         Tween.FadeItem = function(self, Item, Property, Visibility, Speed)
@@ -317,10 +328,39 @@ local Library do
                 [Property] = Visibility and OldTransparency or 1
             }, true)
 
-            Library:Connect(NewTween.Tween.Completed, function()
+            NewTween.Tween.Completed:Once(function()
                 if not Visibility then 
                     task.wait()
                     Item[Property] = OldTransparency
+                end
+            end)
+
+            return NewTween
+        end
+
+        Tween.FadeItemMulti = function(self, Item, Properties, Visibility, Speed)
+            local OldTransparencies = { }
+            local Goal = { }
+
+            for _, Property in Properties do 
+                OldTransparencies[Property] = Item[Property]
+                Goal[Property] = Visibility and OldTransparencies[Property] or 1
+            end
+
+            if Visibility then 
+                for _, Property in Properties do 
+                    Item[Property] = 1
+                end
+            end
+
+            local NewTween = Tween:Create(Item, TweenInfo.new(Speed or Library.Tween.Time, Library.Tween.Style, Library.Tween.Direction), Goal, true)
+
+            NewTween.Tween.Completed:Once(function()
+                if not Visibility then 
+                    task.wait()
+                    for Property, OldTransparency in OldTransparencies do 
+                        Item[Property] = OldTransparency
+                    end
                 end
             end)
 
@@ -401,9 +441,7 @@ local Library do
                 end
 
                 if type(TransparencyProperty) == "table" then 
-                    for _, Property in TransparencyProperty do 
-                        NewTween = Tween:FadeItem(Value, Property, not Visibility, Speed)
-                    end
+                    NewTween = Tween:FadeItemMulti(Value, TransparencyProperty, not Visibility, Speed)
                 else
                     NewTween = Tween:FadeItem(Value, TransparencyProperty, not Visibility, Speed)
                 end
@@ -1351,17 +1389,19 @@ local Library do
                     end
 
                     if type(TransparencyProperty) == "table" then 
-                        for _, Property in TransparencyProperty do 
-                            NewTween = Tween:FadeItem(Value, Property, Bool, Data.Window.FadeTime)
-                        end
+                        NewTween = Tween:FadeItemMulti(Value, TransparencyProperty, Bool, Data.Window.FadeTime)
                     else
                         NewTween = Tween:FadeItem(Value, TransparencyProperty, Bool, Data.Window.FadeTime)
                     end
                 end
 
-                Library:Connect(NewTween.Tween.Completed, function()
+                if NewTween then 
+                    NewTween.Tween.Completed:Once(function()
+                        Debounce = false
+                    end)
+                else
                     Debounce = false
-                end)
+                end
             end
 
             Items["Inactive"]:Connect("MouseButton1Down", function()
@@ -1586,17 +1626,19 @@ local Library do
                     end
 
                     if type(TransparencyProperty) == "table" then 
-                        for _, Property in TransparencyProperty do 
-                            NewTween = Tween:FadeItem(Value, Property, Bool, Data.Window.FadeTime)
-                        end
+                        NewTween = Tween:FadeItemMulti(Value, TransparencyProperty, Bool, Data.Window.FadeTime)
                     else
                         NewTween = Tween:FadeItem(Value, TransparencyProperty, Bool, Data.Window.FadeTime)
                     end
                 end
 
-                Library:Connect(NewTween.Tween.Completed, function()
+                if NewTween then 
+                    NewTween.Tween.Completed:Once(function()
+                        Debounce = false
+                    end)
+                else
                     Debounce = false
-                end)
+                end
             end
 
             Items["Inactive"]:Connect("MouseButton1Down", function()
@@ -2369,8 +2411,24 @@ local Library do
                     PaddingLeft = UDimNew(0, 8)
                 })
 
-                Instances:Create("UIListLayout", {
+                Items["Scroll"] = Instances:Create("ScrollingFrame", {
                     Parent = Items["OptionHolder"].Instance,
+                    Name = "\0",
+                    Active = true,
+                    AutomaticCanvasSize = Enum.AutomaticSize.Y,
+                    BackgroundTransparency = 1,
+                    BorderColor3 = FromRGB(0, 0, 0),
+                    BorderSizePixel = 0,
+                    CanvasSize = UDim2New(0, 0, 0, 0),
+                    ScrollBarImageColor3 = FromRGB(0, 0, 0),
+                    ScrollBarThickness = 0,
+                    ScrollingDirection = Enum.ScrollingDirection.Y,
+                    Size = UDim2New(1, 0, 0, 0),
+                    ZIndex = 5
+                })
+
+                Items["Layout"] = Instances:Create("UIListLayout", {
+                    Parent = Items["Scroll"].Instance,
                     Name = "\0",
                     Padding = UDimNew(0, 3),
                     SortOrder = Enum.SortOrder.LayoutOrder
@@ -2393,14 +2451,23 @@ local Library do
 
                 Debounce = true 
 
-                if Dropdown.IsOpen then 
+                if Dropdown.IsOpen then
                     Items["OptionHolder"].Instance.Visible = true
                     Items["OptionHolder"].Instance.Parent = Library.Holder.Instance
                     Items["Icon"]:Tween(nil, {Rotation = -90})
+
+                    for _, OptionData in Dropdown.Options do
+                        OptionData:Toggle(OptionData.Selected and "Active" or "Inactive")
+                    end
                     
+                    local MaxListHeight = 100
+
                     RenderStepped = RunService.RenderStepped:Connect(function()
                         Items["OptionHolder"].Instance.Position = UDim2New(0, Items["RealDropdown"].Instance.AbsolutePosition.X, 0, Items["RealDropdown"].Instance.AbsolutePosition.Y + Items["RealDropdown"].Instance.AbsoluteSize.Y + 5)
                         Items["OptionHolder"].Instance.Size = UDim2New(0, Items["RealDropdown"].Instance.AbsoluteSize.X, 0, 0)
+
+                        local ContentHeight = Items["Layout"].Instance.AbsoluteContentSize.Y
+                        Items["Scroll"].Instance.Size = UDim2New(1, 0, 0, math.min(ContentHeight, MaxListHeight))
                     end)
 
                     if not Debounce then 
@@ -2440,20 +2507,23 @@ local Library do
                     end
 
                     if type(TransparencyProperty) == "table" then 
-                        for _, Property in TransparencyProperty do 
-                            NewTween = Tween:FadeItem(Value, Property, Bool, Library.FadeSpeed)
-                        end
+                        NewTween = Tween:FadeItemMulti(Value, TransparencyProperty, Bool, Library.FadeSpeed)
                     else
                         NewTween = Tween:FadeItem(Value, TransparencyProperty, Bool, Library.FadeSpeed)
                     end
                 end
                 
-                NewTween.Tween.Completed:Connect(function()
-                    Debounce = false 
+                if NewTween then 
+                    NewTween.Tween.Completed:Once(function()
+                        Debounce = false 
+                        Items["OptionHolder"].Instance.Visible = Dropdown.IsOpen
+                        task.wait(0.2)
+                        Items["OptionHolder"].Instance.Parent = not Dropdown.IsOpen and Library.UnusedHolder.Instance or Library.Holder.Instance
+                    end)
+                else
+                    Debounce = false
                     Items["OptionHolder"].Instance.Visible = Dropdown.IsOpen
-                    task.wait(0.2)
-                    Items["OptionHolder"].Instance.Parent = not Dropdown.IsOpen and Library.UnusedHolder.Instance or Library.Holder.Instance
-                end)
+                end
             end
 
             function Dropdown:SetVisibility(Bool)
@@ -2511,7 +2581,7 @@ local Library do
 
             function Dropdown:Add(Option)
                 local OptionButton = Instances:Create("TextButton", {
-                    Parent = Items["OptionHolder"].Instance,
+                    Parent = Items["Scroll"].Instance,
                     Name = "\0",
                     FontFace = Library.Font,
                     TextColor3 = FromRGB(235, 235, 235),
@@ -2534,12 +2604,12 @@ local Library do
                 }
 
                 function OptionData:Toggle(Status)
-                    if Status == "Active" then 
+                    if Status == "Active" then
                         OptionData.Button:ChangeItemTheme({TextColor3 = "Accent"})
-                        OptionData.Button:Tween(nil, {TextColor3 = Library.Theme.Accent})
+                        OptionData.Button.Instance.TextColor3 = Library.Theme.Accent
                     else
-                        OptionData.Button:ChangeItemTheme({TextColor3 = "Text"}) 
-                        OptionData.Button:Tween(nil, {TextColor3 = Library.Theme.Text})
+                        OptionData.Button:ChangeItemTheme({TextColor3 = "Text"})
+                        OptionData.Button.Instance.TextColor3 = Library.Theme.Text
                     end
                 end
 
@@ -3600,9 +3670,7 @@ local Library do
                     end
 
                     if type(TransparencyProperty) == "table" then 
-                        for _, Property in TransparencyProperty do 
-                            NewTween = Tween:FadeItem(Value, Property, Bool, Library.FadeSpeed)
-                        end
+                        NewTween = Tween:FadeItemMulti(Value, TransparencyProperty, Bool, Library.FadeSpeed)
                     else
                         NewTween = Tween:FadeItem(Value, TransparencyProperty, Bool, Library.FadeSpeed)
                     end
@@ -4117,9 +4185,7 @@ local Library do
                     end
 
                     if type(TransparencyProperty) == "table" then 
-                        for _, Property in TransparencyProperty do 
-                            NewTween = Tween:FadeItem(Value, Property, Bool, Library.FadeSpeed)
-                        end
+                        NewTween = Tween:FadeItemMulti(Value, TransparencyProperty, Bool, Library.FadeSpeed)
                     else
                         NewTween = Tween:FadeItem(Value, TransparencyProperty, Bool, Library.FadeSpeed)
                     end
@@ -4170,7 +4236,23 @@ local Library do
                     Toggled = Keybind.Toggled
                 }
 
-                if Data.Callback then 
+                if Data.Callback then
+                    Library:SafeCall(Data.Callback, Keybind.Toggled)
+                end
+
+                Update()
+            end
+
+            function Keybind:SetToggled(Value, Silent)
+                Keybind.Toggled = Value and true or false
+
+                Library.Flags[Keybind.Flag] = {
+                    Mode = Keybind.Mode,
+                    Key = Keybind.Key,
+                    Toggled = Keybind.Toggled
+                }
+
+                if not Silent and Data.Callback then
                     Library:SafeCall(Data.Callback, Keybind.Toggled)
                 end
 
@@ -4558,7 +4640,7 @@ local Library do
                     ScrollBarImageColor3 = FromRGB(202, 243, 255),
                     MidImage = "rbxassetid://136419474381965",
                     BorderColor3 = FromRGB(0, 0, 0),
-                    ScrollBarThickness = 2,
+                    ScrollBarThickness = 0,
                     Size = UDim2New(1, -12, 1, -10),
                     Position = UDim2New(0, 3, 0, 5),
                     TopImage = "rbxassetid://136419474381965",
@@ -4663,12 +4745,12 @@ local Library do
                 }
 
                 function OptionData:Toggle(Status)
-                    if Status == "Active" then 
+                    if Status == "Active" then
                         OptionData.Button:ChangeItemTheme({TextColor3 = "Accent"})
-                        OptionData.Button:Tween(nil, {TextColor3 = Library.Theme.Accent})
+                        OptionData.Button.Instance.TextColor3 = Library.Theme.Accent
                     else
-                        OptionData.Button:ChangeItemTheme({TextColor3 = "Text"}) 
-                        OptionData.Button:Tween(nil, {TextColor3 = Library.Theme.Text})
+                        OptionData.Button:ChangeItemTheme({TextColor3 = "Text"})
+                        OptionData.Button.Instance.TextColor3 = Library.Theme.Text
                     end
                 end
 
@@ -6032,6 +6114,16 @@ local Library do
                 Mode = Data.Mode or Data.mode or "Toggle",
             }
 
+            local KeybindCallback = Keybind.Callback
+
+            Keybind.Callback = function(Value)
+                if NewToggle.Value ~= Value then
+                    NewToggle:Set(Value)
+                end
+
+                KeybindCallback(Value)
+            end
+
             local NewKeybind, KeybindItems = Components:Keybind({
                 Name = Toggle.Name,
                 Parent = ToggleItems["SubElements"],
@@ -6041,6 +6133,16 @@ local Library do
                 Mode = Keybind.Mode,
                 Callback = Keybind.Callback
             })
+
+            local OldToggleSet = NewToggle.Set
+
+            function NewToggle:Set(Value)
+                OldToggleSet(self, Value)
+
+                if NewKeybind.SetToggled then
+                    NewKeybind:SetToggled(Value, true)
+                end
+            end
 
             return NewKeybind
         end
