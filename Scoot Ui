@@ -2515,7 +2515,7 @@ local Library do
                     FontFace = Library.Font,
                     TextColor3 = FromRGB(235, 235, 235),
                     BorderColor3 = FromRGB(0, 0, 0),
-                    Text = Option,
+                    Text = "",
                     AutoButtonColor = false,
                     BorderSizePixel = 0,
                     BackgroundTransparency = 1,
@@ -2524,28 +2524,53 @@ local Library do
                     ZIndex = 5,
                     TextSize = 9,
                     BackgroundColor3 = FromRGB(255, 255, 255)
-                })  OptionButton:AddToTheme({TextColor3 = "Text"})
+                })
+
+                local OptionText = Instances:Create("TextLabel", {
+                    Parent = OptionButton.Instance,
+                    Name = "\0",
+                    FontFace = Library.Font,
+                    TextColor3 = FromRGB(235, 235, 235),
+                    BorderColor3 = FromRGB(0, 0, 0),
+                    Text = Option,
+                    BackgroundTransparency = 1,
+                    Position = UDim2New(0, 6, 0, 0),
+                    Size = UDim2New(1, -6, 1, 0),
+                    TextXAlignment = Enum.TextXAlignment.Left,
+                    TextTruncate = Enum.TextTruncate.AtEnd,
+                    BorderSizePixel = 0,
+                    ZIndex = 5,
+                    TextSize = 9,
+                    BackgroundColor3 = FromRGB(255, 255, 255)
+                })  OptionText:AddToTheme({TextColor3 = "Text"})
+
+                local OptionLiner = Instances:Create("Frame", {
+                    Parent = OptionButton.Instance,
+                    Name = "\0",
+                    BackgroundColor3 = FromRGB(202, 243, 255),
+                    BorderSizePixel = 0,
+                    Size = UDim2New(0, 1, 1, 0),
+                    BackgroundTransparency = 1,
+                    ZIndex = 5
+                })  OptionLiner:AddToTheme({BackgroundColor3 = "Accent"})
 
                 local OptionData = {
                     Button = OptionButton,
+                    Text = OptionText,
+                    Line = OptionLiner,
                     Name = Option,
                     Selected = false
                 }
 
                 function OptionData:Toggle(Status)
                     if Status == "Active" then
-                        OptionData.Button:ChangeItemTheme({TextColor3 = "Accent", BackgroundColor3 = "Accent", BackgroundTransparency = function()
-                            return 0.85
-                        end})
-                        OptionData.Button.Instance.TextColor3 = Library.Theme.Accent
-                        OptionData.Button.Instance.BackgroundColor3 = Library.Theme.Accent
-                        OptionData.Button.Instance.BackgroundTransparency = 0.85
+                        OptionData.Text:ChangeItemTheme({TextColor3 = "Accent"})
+                        OptionData.Text.Instance.TextColor3 = Library.Theme.Accent
+                        OptionData.Line.Instance.BackgroundTransparency = 0
                     else
-                        OptionData.Button:ChangeItemTheme({TextColor3 = "Text", BackgroundTransparency = function()
-                            return 1
-                        end})
-                        OptionData.Button.Instance.TextColor3 = Library.Theme.Text
-                        OptionData.Button.Instance.BackgroundTransparency = 1
+                        OptionData.Text:ChangeItemTheme({TextColor3 = "Text"})
+                        OptionData.Text.Instance.TextColor3 = Library.Theme.Text
+                        OptionData.Line.Instance.BackgroundTransparency = 1
                     end
                 end
 
@@ -4661,7 +4686,7 @@ local Library do
                     FontFace = Library.Font,
                     TextColor3 = FromRGB(235, 235, 235),
                     BorderColor3 = FromRGB(0, 0, 0),
-                    Text = Option,
+                    Text = "",
                     AutoButtonColor = false,
                     BorderSizePixel = 0,
                     BackgroundTransparency = 1,
@@ -4670,30 +4695,55 @@ local Library do
                     ZIndex = 1,
                     TextSize = 9,
                     BackgroundColor3 = FromRGB(255, 255, 255)
-                })  OptionButton:AddToTheme({TextColor3 = "Text"})
+                })
 
-                OptionButton:TextBorder()
+                local OptionText = Instances:Create("TextLabel", {
+                    Parent = OptionButton.Instance,
+                    Name = "\0",
+                    FontFace = Library.Font,
+                    TextColor3 = FromRGB(235, 235, 235),
+                    BorderColor3 = FromRGB(0, 0, 0),
+                    Text = Option,
+                    BackgroundTransparency = 1,
+                    Position = UDim2New(0, 6, 0, 0),
+                    Size = UDim2New(1, -6, 1, 0),
+                    TextXAlignment = Enum.TextXAlignment.Left,
+                    TextTruncate = Enum.TextTruncate.AtEnd,
+                    BorderSizePixel = 0,
+                    ZIndex = 1,
+                    TextSize = 9,
+                    BackgroundColor3 = FromRGB(255, 255, 255)
+                })  OptionText:AddToTheme({TextColor3 = "Text"})
+
+                OptionText:TextBorder()
+
+                local OptionLiner = Instances:Create("Frame", {
+                    Parent = OptionButton.Instance,
+                    Name = "\0",
+                    BackgroundColor3 = FromRGB(202, 243, 255),
+                    BorderSizePixel = 0,
+                    Size = UDim2New(0, 1, 1, 0),
+                    BackgroundTransparency = 1,
+                    ZIndex = 1
+                })  OptionLiner:AddToTheme({BackgroundColor3 = "Accent"})
 
                 local OptionData = {
                     Button = OptionButton,
+                    Text = OptionText,
+                    Line = OptionLiner,
                     Name = Option,
                     Selected = false
                 }
 
                 function OptionData:Toggle(Status)
                     if Status == "Active" then
-                        OptionData.Button:ChangeItemTheme({TextColor3 = "Accent", BackgroundColor3 = "Accent", BackgroundTransparency = function()
-                            return 0.85
-                        end})
-                        OptionData.Button.Instance.TextColor3 = Library.Theme.Accent
-                        OptionData.Button.Instance.BackgroundColor3 = Library.Theme.Accent
-                        OptionData.Button.Instance.BackgroundTransparency = 0.85
+                        OptionData.Text:ChangeItemTheme({TextColor3 = "Accent"})
+                        OptionData.Text.Instance.TextColor3 = Library.Theme.Accent
+                        OptionData.Line.Instance.BackgroundTransparency = 0
                     else
-                        OptionData.Button:ChangeItemTheme({TextColor3 = "Text", BackgroundTransparency = function()
-                            return 1
-                        end})
-                        OptionData.Button.Instance.TextColor3 = Library.Theme.Text
-                        OptionData.Button.Instance.BackgroundTransparency = 1
+                        OptionData.Text:ChangeItemTheme({TextColor3 = "Text"})
+                        OptionData.Text.Instance.TextColor3 = Library.Theme.Text
+                        OptionData.Line.Instance.BackgroundTransparency = 1
                     end
                 end
 
