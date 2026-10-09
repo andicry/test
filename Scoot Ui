@@ -5142,8 +5142,6 @@ local Library do
             })  Items["Liner"]:AddToTheme({BackgroundColor3 = "Accent"})
         end
 
-        Items["Notification"].Instance.AutomaticSize = Enum.AutomaticSize.Y
-
         Items["Notification"].Instance.BackgroundTransparency = 0
         Items["Title"].Instance.TextTransparency = 0
         Items["Description"].Instance.TextTransparency = 0.4
