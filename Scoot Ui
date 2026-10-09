@@ -5092,7 +5092,7 @@ local Library do
                 PaddingTop = UDimNew(0, 5),
                 PaddingBottom = UDimNew(0, 12),
                 PaddingRight = UDimNew(0, 5),
-                PaddingLeft = UDimNew(0, 5)
+                PaddingLeft = UDimNew(0, 0)
             })
 
             Items["Title"] = Instances:Create("TextLabel", {
@@ -5142,51 +5142,19 @@ local Library do
             })  Items["Liner"]:AddToTheme({BackgroundColor3 = "Accent"})
         end
 
-        local Size = Items["Notification"].Instance.AbsoluteSize
-
-        for Index, Value in Items do 
-            if Value.Instance:IsA("Frame") then
-                Value.Instance.BackgroundTransparency = 1
-            elseif Value.Instance:IsA("TextLabel") then 
-                Value.Instance.TextTransparency = 1
-            elseif Value.Instance:IsA("UIStroke") then
-                Value.Instance.Transparency = 1
-            end
-        end 
-
         Items["Notification"].Instance.AutomaticSize = Enum.AutomaticSize.Y
 
-        Library:Thread(function()
-            for Index, Value in Items do 
-                if Value.Instance:IsA("Frame") then
-                    Value:Tween(nil, {BackgroundTransparency = 0})
-                elseif Value.Instance:IsA("TextLabel") and Index ~= "Description" then 
-                    Value:Tween(nil, {TextTransparency = 0})
-                elseif Value.Instance:IsA("TextLabel") and Index == "Description" then 
-                    Value:Tween(nil, {TextTransparency = 0.4})
-                elseif Value.Instance:IsA("UIStroke") then
-                    Value:Tween(nil, {Transparency = 0})
-                end
-            end
+        Items["Notification"].Instance.BackgroundTransparency = 0
+        Items["Title"].Instance.TextTransparency = 0
+        Items["Description"].Instance.TextTransparency = 0.4
+        Items["UIStroke1"].Instance.Transparency = 0
+        Items["UIStroke2"].Instance.Transparency = 0.6
+        Items["UIStroke3"].Instance.Transparency = 0.6
+        Items["Liner"].Instance.BackgroundTransparency = 0
+        Items["Liner"].Instance.Size = UDim2New(1, 0, 0, 1)
 
-            Items["Notification"]:Tween(nil, {Size = UDim2New(0, Size.X, 0, 0)})
-            Items["Liner"]:Tween(TweenInfo.new(Duration, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Size = UDim2New(0, 0, 0, 1)})
-            
-            task.delay(Duration + 0.1, function()
-                for Index, Value in Items do 
-                    if Value.Instance:IsA("Frame") then
-                        Value:Tween(nil, {BackgroundTransparency = 1})
-                    elseif Value.Instance:IsA("TextLabel") then 
-                        Value:Tween(nil, {TextTransparency = 1})
-                    elseif Value.Instance:IsA("UIStroke") then
-                        Value:Tween(nil, {Transparency = 1})
-                    end
-                end
-
-                Items["Notification"]:Tween(nil, {Size = UDim2New(0, 0, 0, 0)})
-                task.wait(0.5)
-                Items["Notification"]:Clean()
-            end)
+        task.delay(Duration, function()
+            Items["Notification"]:Clean()
         end)
     end
 
