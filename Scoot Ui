@@ -248,6 +248,153 @@ local Library do
 
     Library.Theme = TableClone(Themes["Preset"])
 
+    Library.ThemeManager = {
+        BuiltInThemes = {
+            ['Primordial']    = { 1, '{"FontColor":"ffffff","MainColor":"171717","AccentColor":"c2919c","BackgroundColor":"1c1c1c","OutlineColor":"323232"}' },
+            ['Gamesense']     = { 2, '{"FontColor":"ffffff","MainColor":"111111","AccentColor":"97cf3c","BackgroundColor":"151515","OutlineColor":"252525"}' },
+            ['Neverlose']     = { 3, '{"FontColor":"ffffff","MainColor":"080d15","AccentColor":"00aeff","BackgroundColor":"05080d","OutlineColor":"1c293a"}' },
+            ['Onetap']        = { 4, '{"FontColor":"ffffff","MainColor":"1c1b22","AccentColor":"e2a03d","BackgroundColor":"131217","OutlineColor":"2c2a35"}' },
+            ['Fatality']      = { 5, '{"FontColor":"ffffff","MainColor":"1e1842","AccentColor":"c50754","BackgroundColor":"191335","OutlineColor":"3c355d"}' },
+            ['Aimware']       = { 6, '{"FontColor":"ffffff","MainColor":"1b1b1b","AccentColor":"e03131","BackgroundColor":"121212","OutlineColor":"2e2e2e"}' },
+            ['Ev0lve']        = { 7, '{"FontColor":"ffffff","MainColor":"171e24","AccentColor":"0087ff","BackgroundColor":"11151a","OutlineColor":"232d36"}' },
+            ['Rifk7']         = { 8, '{"FontColor":"ffffff","MainColor":"141414","AccentColor":"ff005d","BackgroundColor":"0f0f0f","OutlineColor":"2c2c2c"}' },
+            ['Nixware']       = { 9, '{"FontColor":"ffffff","MainColor":"151b24","AccentColor":"327da8","BackgroundColor":"0f131a","OutlineColor":"212b38"}' },
+            ['Inuria']        = { 10, '{"FontColor":"ffffff","MainColor":"1d1d1d","AccentColor":"ff6600","BackgroundColor":"141414","OutlineColor":"2a2a2a"}' },
+            ['Monolith']      = { 11, '{"FontColor":"ffffff","MainColor":"18181a","AccentColor":"bf9456","BackgroundColor":"121213","OutlineColor":"2b2b2e"}' },
+            ['Novoline']      = { 12, '{"FontColor":"ffffff","MainColor":"17181f","AccentColor":"3c6be8","BackgroundColor":"111217","OutlineColor":"232530"}' },
+            ['Plague']        = { 13, '{"FontColor":"ffffff","MainColor":"141a14","AccentColor":"5cff5c","BackgroundColor":"0d120d","OutlineColor":"1e261e"}' },
+            ['Vape V4']       = { 14, '{"FontColor":"ffffff","MainColor":"161616","AccentColor":"ff355e","BackgroundColor":"101010","OutlineColor":"262626"}' },
+            ['Midnight']      = { 15, '{"FontColor":"ffffff","MainColor":"0d0d12","AccentColor":"a242f5","BackgroundColor":"07070a","OutlineColor":"171721"}' },
+            ['Dracula']       = { 16, '{"FontColor":"ffffff","MainColor":"282a36","AccentColor":"bd93f9","BackgroundColor":"1e1f29","OutlineColor":"444444"}' },
+            ['Nord']          = { 17, '{"FontColor":"ffffff","MainColor":"2e3440","AccentColor":"88c0d0","BackgroundColor":"242933","OutlineColor":"3b4252"}' },
+            ['Cyberpunk']     = { 18, '{"FontColor":"ffffff","MainColor":"121015","AccentColor":"f3e600","BackgroundColor":"08070a","OutlineColor":"2a2438"}' },
+            ['Bubblegum']     = { 19, '{"FontColor":"ffffff","MainColor":"1f1a1d","AccentColor":"ff94b8","BackgroundColor":"171315","OutlineColor":"362d31"}' },
+            ['Abyss']         = { 20, '{"FontColor":"ffffff","MainColor":"0b132b","AccentColor":"00b4d8","BackgroundColor":"011627","OutlineColor":"1c2541"}' },
+            ['Cherry Blossom']= { 21, '{"FontColor":"ffffff","MainColor":"2d2024","AccentColor":"ffb3c1","BackgroundColor":"201619","OutlineColor":"473338"}' },
+            ['Halloween']     = { 22, '{"FontColor":"ffffff","MainColor":"150d1a","AccentColor":"ff6700","BackgroundColor":"0d0611","OutlineColor":"351f42"}' },
+            ['Acid']          = { 23, '{"FontColor":"ffffff","MainColor":"101500","AccentColor":"9ef000","BackgroundColor":"080b00","OutlineColor":"202b00"}' },
+            ['Pastel Pink']   = { 24, '{"FontColor":"ffffff","MainColor":"232328","AccentColor":"ffb6c1","BackgroundColor":"1a1a1e","OutlineColor":"303038"}' },
+            ['Royal Purple']  = { 25, '{"FontColor":"ffffff","MainColor":"181324","AccentColor":"8a2be2","BackgroundColor":"0f0b1a","OutlineColor":"261e38"}' },
+            ['Crimson Black'] = { 26, '{"FontColor":"ffffff","MainColor":"0f0f0f","AccentColor":"dc143c","BackgroundColor":"050505","OutlineColor":"1a1a1a"}' },
+            ['Carbon']        = { 27, '{"FontColor":"ffffff","MainColor":"222222","AccentColor":"888888","BackgroundColor":"181818","OutlineColor":"333333"}' },
+            ['Gold Nova']     = { 28, '{"FontColor":"ffffff","MainColor":"1f1f1f","AccentColor":"ffd700","BackgroundColor":"141414","OutlineColor":"2e2e2e"}' },
+            ['Oceanic']       = { 29, '{"FontColor":"ffffff","MainColor":"101c24","AccentColor":"00bfff","BackgroundColor":"0a1217","OutlineColor":"182a36"}' },
+            ['Neon Genesis']  = { 30, '{"FontColor":"ffffff","MainColor":"1c1729","AccentColor":"76ff03","BackgroundColor":"120f1a","OutlineColor":"2a233d"}' },
+            ['Rust']          = { 31, '{"FontColor":"ffffff","MainColor":"241e1a","AccentColor":"d9531e","BackgroundColor":"171310","OutlineColor":"362d27"}' },
+            ['Minty Fresh']   = { 32, '{"FontColor":"ffffff","MainColor":"1c211e","AccentColor":"00fa9a","BackgroundColor":"131715","OutlineColor":"262e2a"}' },
+            ['Cyber Pink']    = { 33, '{"FontColor":"ffffff","MainColor":"241221","AccentColor":"ff007f","BackgroundColor":"170a15","OutlineColor":"381a33"}' },
+            ['Slate']         = { 34, '{"FontColor":"ffffff","MainColor":"171717","AccentColor":"8388aa","BackgroundColor":"121212","OutlineColor":"2c2c2c"}' },
+            ['Jester']        = { 35, '{"FontColor":"ffffff","MainColor":"242424","AccentColor":"db4467","BackgroundColor":"1c1c1c","OutlineColor":"373737"}' },
+            ['Obsidian']      = { 36, '{"FontColor":"ffffff","MainColor":"121212","AccentColor":"d4d4d4","BackgroundColor":"0a0a0a","OutlineColor":"1f1f1f"}' },
+            ['Onyx']          = { 37, '{"FontColor":"ffffff","MainColor":"1a1b1c","AccentColor":"a1a5ab","BackgroundColor":"111112","OutlineColor":"262729"}' },
+            ['Amethyst']      = { 38, '{"FontColor":"ffffff","MainColor":"1a1423","AccentColor":"9b5de5","BackgroundColor":"120d17","OutlineColor":"2b2138"}' },
+            ['Emerald']       = { 39, '{"FontColor":"ffffff","MainColor":"131c16","AccentColor":"2d6a4f","BackgroundColor":"0a120c","OutlineColor":"223026"}' },
+            ['Sapphire']      = { 40, '{"FontColor":"ffffff","MainColor":"0f172a","AccentColor":"3b82f6","BackgroundColor":"070b14","OutlineColor":"1e293b"}' },
+            ['Ruby']          = { 41, '{"FontColor":"ffffff","MainColor":"241010","AccentColor":"e63946","BackgroundColor":"170909","OutlineColor":"381a1a"}' },
+            ['Topaz']         = { 42, '{"FontColor":"ffffff","MainColor":"211a11","AccentColor":"f59e0b","BackgroundColor":"140f09","OutlineColor":"33281b"}' },
+            ['Matrix']        = { 43, '{"FontColor":"ffffff","MainColor":"0d120d","AccentColor":"00ff41","BackgroundColor":"060a06","OutlineColor":"1a241a"}' },
+            ['Vaporwave']     = { 44, '{"FontColor":"ffffff","MainColor":"1e132e","AccentColor":"00ffff","BackgroundColor":"130a1f","OutlineColor":"2b1d40"}' },
+            ['Synthwave']     = { 45, '{"FontColor":"ffffff","MainColor":"211124","AccentColor":"ff00ff","BackgroundColor":"140917","OutlineColor":"331c38"}' },
+            ['Outrun']        = { 46, '{"FontColor":"ffffff","MainColor":"14101f","AccentColor":"f72585","BackgroundColor":"0b0812","OutlineColor":"231c33"}' },
+            ['Blood Moon']    = { 47, '{"FontColor":"ffffff","MainColor":"1a0f11","AccentColor":"c1121f","BackgroundColor":"12090a","OutlineColor":"29191c"}' },
+            ['Eclipse']       = { 48, '{"FontColor":"ffffff","MainColor":"121214","AccentColor":"fdf0d5","BackgroundColor":"0a0a0b","OutlineColor":"1c1c1f"}' },
+            ['Galaxy']        = { 49, '{"FontColor":"ffffff","MainColor":"0d111a","AccentColor":"8b5cf6","BackgroundColor":"06090f","OutlineColor":"192030"}' },
+            ['Void']          = { 50, '{"FontColor":"ffffff","MainColor":"050505","AccentColor":"6d28d9","BackgroundColor":"000000","OutlineColor":"0f0f0f"}' },
+            ['Toxic']         = { 51, '{"FontColor":"ffffff","MainColor":"141712","AccentColor":"a3e635","BackgroundColor":"0b0d0a","OutlineColor":"21261d"}' },
+            ['Inferno']       = { 52, '{"FontColor":"ffffff","MainColor":"211512","AccentColor":"ea580c","BackgroundColor":"140c0a","OutlineColor":"33211d"}' },
+            ['Magma']         = { 53, '{"FontColor":"ffffff","MainColor":"1f100d","AccentColor":"dc2626","BackgroundColor":"120806","OutlineColor":"301915"}' },
+            ['Frost']         = { 54, '{"FontColor":"ffffff","MainColor":"151c24","AccentColor":"7dd3fc","BackgroundColor":"0d1217","OutlineColor":"232e3b"}' },
+            ['Glacier']       = { 55, '{"FontColor":"ffffff","MainColor":"111a1f","AccentColor":"38bdf8","BackgroundColor":"091014","OutlineColor":"1d2a33"}' },
+            ['Aurora Green']  = { 56, '{"FontColor":"ffffff","MainColor":"0d1f1c","AccentColor":"10b981","BackgroundColor":"071412","OutlineColor":"16332e"}' },
+            ['Twilight']      = { 57, '{"FontColor":"ffffff","MainColor":"1a1426","AccentColor":"818cf8","BackgroundColor":"110d1a","OutlineColor":"271e3b"}' },
+            ['Sunset']        = { 58, '{"FontColor":"ffffff","MainColor":"24151a","AccentColor":"f43f5e","BackgroundColor":"170c10","OutlineColor":"361e27"}' },
+            ['Sunrise']       = { 59, '{"FontColor":"ffffff","MainColor":"1c1926","AccentColor":"fcd34d","BackgroundColor":"110f17","OutlineColor":"292538"}' },
+            ['Forest']        = { 60, '{"FontColor":"ffffff","MainColor":"131c13","AccentColor":"22c55e","BackgroundColor":"0b120b","OutlineColor":"202e20"}' },
+            ['Jungle']        = { 61, '{"FontColor":"ffffff","MainColor":"0e1710","AccentColor":"14b8a6","BackgroundColor":"070d08","OutlineColor":"17261a"}' },
+            ['Desert']        = { 62, '{"FontColor":"ffffff","MainColor":"211c15","AccentColor":"d97706","BackgroundColor":"14100c","OutlineColor":"332b21"}' },
+            ['Dune']          = { 63, '{"FontColor":"ffffff","MainColor":"26201a","AccentColor":"eab308","BackgroundColor":"1a1510","OutlineColor":"3b3229"}' },
+            ['Orchid']        = { 64, '{"FontColor":"ffffff","MainColor":"1f1324","AccentColor":"c026d3","BackgroundColor":"120a17","OutlineColor":"2e1c36"}' },
+            ['Lotus']         = { 65, '{"FontColor":"ffffff","MainColor":"21151c","AccentColor":"ec4899","BackgroundColor":"140b11","OutlineColor":"33202c"}' },
+            ['Rose']          = { 66, '{"FontColor":"ffffff","MainColor":"211013","AccentColor":"f43f5e","BackgroundColor":"14080a","OutlineColor":"33171e"}' },
+            ['Velvet']        = { 67, '{"FontColor":"ffffff","MainColor":"1f0a0d","AccentColor":"9f1239","BackgroundColor":"120406","OutlineColor":"300d14"}' },
+            ['Mocha']         = { 68, '{"FontColor":"ffffff","MainColor":"1c1614","AccentColor":"b45309","BackgroundColor":"120e0d","OutlineColor":"29211e"}' },
+            ['Espresso']      = { 69, '{"FontColor":"ffffff","MainColor":"14100e","AccentColor":"d97706","BackgroundColor":"0a0706","OutlineColor":"211a17"}' },
+            ['Cobalt']        = { 70, '{"FontColor":"ffffff","MainColor":"101726","AccentColor":"2563eb","BackgroundColor":"090d1a","OutlineColor":"1c263d"}' },
+            ['Azure']         = { 71, '{"FontColor":"ffffff","MainColor":"0d1a26","AccentColor":"0ea5e9","BackgroundColor":"07101a","OutlineColor":"172b3d"}' },
+            ['Teal']          = { 72, '{"FontColor":"ffffff","MainColor":"0d1c1c","AccentColor":"0d9488","BackgroundColor":"071212","OutlineColor":"172e2e"}' },
+            ['Cyan']          = { 73, '{"FontColor":"ffffff","MainColor":"101a1c","AccentColor":"06b6d4","BackgroundColor":"091012","OutlineColor":"1b2b2e"}' },
+            ['Magenta']       = { 74, '{"FontColor":"ffffff","MainColor":"21111c","AccentColor":"d946ef","BackgroundColor":"140a11","OutlineColor":"33192b"}' },
+            ['Neon Red']      = { 75, '{"FontColor":"ffffff","MainColor":"140a0a","AccentColor":"ff003c","BackgroundColor":"0d0505","OutlineColor":"211212"}' },
+            ['Neon Blue']     = { 76, '{"FontColor":"ffffff","MainColor":"080c14","AccentColor":"0066ff","BackgroundColor":"04070a","OutlineColor":"121b2b"}' },
+            ['Neon Green']    = { 77, '{"FontColor":"ffffff","MainColor":"0a140a","AccentColor":"39ff14","BackgroundColor":"050a05","OutlineColor":"122112"}' },
+            ['Neon Yellow']   = { 78, '{"FontColor":"ffffff","MainColor":"141405","AccentColor":"ccff00","BackgroundColor":"0a0a02","OutlineColor":"21210a"}' },
+            ['Neon Purple']   = { 79, '{"FontColor":"ffffff","MainColor":"110a17","AccentColor":"b026ff","BackgroundColor":"09050d","OutlineColor":"1b1126"}' },
+            ['Neon Orange']   = { 80, '{"FontColor":"ffffff","MainColor":"170e08","AccentColor":"ff5e00","BackgroundColor":"0d0704","OutlineColor":"24160c"}' },
+            ['Ghost']         = { 81, '{"FontColor":"ffffff","MainColor":"1c1e21","AccentColor":"94a3b8","BackgroundColor":"121314","OutlineColor":"2b2e33"}' },
+            ['Phantom']       = { 82, '{"FontColor":"ffffff","MainColor":"15151c","AccentColor":"a78bfa","BackgroundColor":"0b0b12","OutlineColor":"23232e"}' },
+            ['Spectre']       = { 83, '{"FontColor":"ffffff","MainColor":"141716","AccentColor":"6ee7b7","BackgroundColor":"0b0d0c","OutlineColor":"212624"}' },
+            ['Wraith']        = { 84, '{"FontColor":"ffffff","MainColor":"13171a","AccentColor":"93c5fd","BackgroundColor":"0a0d0f","OutlineColor":"20262b"}' },
+            ['Banshee']       = { 85, '{"FontColor":"ffffff","MainColor":"1a1314","AccentColor":"fca5a5","BackgroundColor":"0f0a0b","OutlineColor":"2b1f21"}' },
+            ['Ninja']         = { 86, '{"FontColor":"ffffff","MainColor":"0d0d0d","AccentColor":"b91c1c","BackgroundColor":"050505","OutlineColor":"171717"}' },
+            ['Samurai']       = { 87, '{"FontColor":"ffffff","MainColor":"1c1212","AccentColor":"fbbf24","BackgroundColor":"120a0a","OutlineColor":"2b1b1b"}' },
+            ['Ronin']         = { 88, '{"FontColor":"ffffff","MainColor":"1c1b1a","AccentColor":"9ca3af","BackgroundColor":"121110","OutlineColor":"2e2b29"}' },
+            ['Shogun']        = { 89, '{"FontColor":"ffffff","MainColor":"171221","AccentColor":"fcd34d","BackgroundColor":"0d0914","OutlineColor":"261e38"}' },
+            ['Assassin']      = { 90, '{"FontColor":"ffffff","MainColor":"0f0f0f","AccentColor":"991b1b","BackgroundColor":"080808","OutlineColor":"1a1a1a"}' },
+            ['Stealth']       = { 91, '{"FontColor":"ffffff","MainColor":"121314","AccentColor":"60a5fa","BackgroundColor":"0a0a0a","OutlineColor":"1f2124"}' },
+            ['Covert']        = { 92, '{"FontColor":"ffffff","MainColor":"121413","AccentColor":"4ade80","BackgroundColor":"0a0a0a","OutlineColor":"1f2421"}' },
+            ['Classified']    = { 93, '{"FontColor":"ffffff","MainColor":"141212","AccentColor":"f87171","BackgroundColor":"0a0a0a","OutlineColor":"241f1f"}' },
+            ['Enigma']        = { 94, '{"FontColor":"ffffff","MainColor":"16121f","AccentColor":"2dd4bf","BackgroundColor":"0d0914","OutlineColor":"241d33"}' },
+            ['Cipher']        = { 95, '{"FontColor":"ffffff","MainColor":"121c16","AccentColor":"ffb703","BackgroundColor":"0a120d","OutlineColor":"1f3025"}' },
+            ['Paradox']       = { 96, '{"FontColor":"ffffff","MainColor":"17171c","AccentColor":"ff007f","BackgroundColor":"0d0d12","OutlineColor":"262630"}' },
+            ['Quantum']       = { 97, '{"FontColor":"ffffff","MainColor":"0a101a","AccentColor":"00f5ff","BackgroundColor":"05080d","OutlineColor":"121d2e"}' },
+            ['Nebula']        = { 98, '{"FontColor":"ffffff","MainColor":"140b24","AccentColor":"fdf8ff","BackgroundColor":"0a0514","OutlineColor":"21123d"}' },
+            ['Cosmos']        = { 99, '{"FontColor":"ffffff","MainColor":"08080a","AccentColor":"ff66cc","BackgroundColor":"030305","OutlineColor":"14141a"}' },
+            ['Infinity']      = { 100, '{"FontColor":"ffffff","MainColor":"0a0a0a","AccentColor":"ffffff","BackgroundColor":"000000","OutlineColor":"141414"}' }
+        }
+    }
+
+    function Library.ThemeManager.ApplyTheme(self, Name)
+        local Theme = self.BuiltInThemes[Name]
+
+        if not Theme then
+            return
+        end
+
+        local Colors = HttpService:JSONDecode(Theme[2])
+
+        local Font = FromHex(Colors.FontColor)
+        local Main = FromHex(Colors.MainColor)
+        local Accent = FromHex(Colors.AccentColor)
+        local Background = FromHex(Colors.BackgroundColor)
+        local Outline = FromHex(Colors.OutlineColor)
+
+        local NewTheme = {
+            ["Background"] = Background,
+            ["Border"] = Background:Lerp(FromRGB(0, 0, 0), 0.35),
+            ["Inline"] = Background:Lerp(Outline, 0.35),
+            ["Hovered Element"] = Main:Lerp(FromRGB(255, 255, 255), 0.15),
+            ["Page Background"] = Background:Lerp(Main, 0.5),
+            ["Outline"] = Outline,
+            ["Element"] = Main,
+            ["Gradient"] = Font:Lerp(FromRGB(128, 128, 128), 0.2),
+            ["Text"] = Font,
+            ["Text Stroke"] = FromRGB(0, 0, 0),
+            ["Placeholder Text"] = Font:Lerp(FromRGB(128, 128, 128), 0.4),
+            ["Accent"] = Accent
+        }
+
+        for Index, Value in NewTheme do
+            Library.Theme[Index] = Value
+            Library:ChangeTheme(Index, Value)
+
+            local SetFunction = Library.SetFlags[Index .. "Theme"]
+
+            if SetFunction then
+                SetFunction(Value)
+            end
+        end
+    end
+
     -- Folders
     for Index, Value in Library.Folders do 
         if not isfolder(Value) then
@@ -864,7 +1011,7 @@ local Library do
         PaddingTop = UDimNew(0, 12),
         PaddingBottom = UDimNew(0, 12),
         PaddingRight = UDimNew(0, 12),
-        PaddingLeft = UDimNew(0, 12)
+        PaddingLeft = UDimNew(0, 0)
     })
 
     Library.Unload = function(self)
@@ -6453,7 +6600,22 @@ local Library do
         local SettingsPage = Window:Page({Name = "Settings", SubPages = true}) do 
             local ThemingSubPage = SettingsPage:SubPage({Name = "Theming", Columns = 2}) do 
                 local ThemesSection = ThemingSubPage:Section({Name = "Themes", Side = 1}) do
-                    for Index, Value in Library.Theme do 
+                    local ThemeNames = { }
+
+                    for Index, Value in Library.ThemeManager.BuiltInThemes do
+                        TableInsert(ThemeNames, Value[1], Index)
+                    end
+
+                    ThemesSection:Dropdown({
+                        Name = "Theme Presets",
+                        Flag = "ThemePresets",
+                        Items = ThemeNames,
+                        Callback = function(Value)
+                            Library.ThemeManager:ApplyTheme(Value)
+                        end
+                    })
+
+                    for Index, Value in Library.Theme do
                         ThemesSection:Label(Index):Colorpicker({
                             Name = Index,
                             Flag = Index.."Theme",
