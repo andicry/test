@@ -56,19 +56,19 @@ local Library do
         Flags = { },
 
         Theme = {
-    ["Background"] = FromRGB(28, 30, 33),
-    ["Inline"] = FromRGB(18, 19, 20),
-    ["Page Background"] = FromRGB(18, 19, 20),
-    ["Border"] = FromRGB(43, 46, 51),
-    ["Outline"] = FromRGB(43, 46, 51),
-    ["Accent"] = FromRGB(148, 163, 184),
-    ["Element"] = FromRGB(18, 19, 20),
-    ["Hovered Element"] = FromRGB(28, 30, 33),
+    ["Background"] = FromRGB(10, 10, 12),
+    ["Inline"] = FromRGB(8, 8, 10),
+    ["Page Background"] = FromRGB(20, 20, 22),
+    ["Border"] = FromRGB(0, 0, 0),
+    ["Outline"] = FromRGB(58, 31, 93),
+    ["Accent"] = FromRGB(139, 63, 252),
+    ["Element"] = FromRGB(18, 18, 20),
+    ["Hovered Element"] = FromRGB(42, 27, 61),
     ["Text"] = FromRGB(255, 255, 255),
-    ["Text Border"] = FromRGB(43, 46, 51)
+    ["Text Border"] = FromRGB(0, 0, 0)
 },
 
-        MenuKeybind = Enum.KeyCode.Z,
+        MenuKeybind = Enum.KeyCode.RightControl,
 
         Tween = {
             Time = 0.3,
@@ -1813,6 +1813,10 @@ Library.RigPreview = function(self, Data)
                     end
                 end
                 Library.CurrentColorpicker = Colorpicker
+                Colorpicker._JustOpened = true
+                task.delay(0.15, function()
+                    Colorpicker._JustOpened = false
+                end)
             else
                 Win.Visible = false
                 Win.ZIndex = 1
@@ -2003,6 +2007,12 @@ Library.RigPreview = function(self, Data)
 
         Library:Connect(UserInputService.InputBegan, function(Input)
             if Input.UserInputType == Enum.UserInputType.MouseButton1 then
+                if Colorpicker._JustOpened then
+                    return
+                end
+                if not Colorpicker.IsOpen then
+                    return
+                end
                 if Library:IsMouseOverFrame(Items["ColorpickerWindow"]) then
                     return
                 end
