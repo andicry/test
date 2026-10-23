@@ -60,7 +60,7 @@ local Library do
     ["Inline"] = FromRGB(8, 8, 10),
     ["Page Background"] = FromRGB(20, 20, 22),
     ["Border"] = FromRGB(0, 0, 0),
-    ["Outline"] = FromRGB(58, 31, 93),
+    ["Outline"] = FromRGB(0, 0, 0),
     ["Accent"] = FromRGB(139, 63, 252),
     ["Element"] = FromRGB(18, 18, 20),
     ["Hovered Element"] = FromRGB(42, 27, 61),
@@ -503,6 +503,168 @@ local Library do
         Library.Font = CustomFont:Get("Windows-XP-Tahoma")
     end
 
+    do
+        local RunService = game:GetService("RunService")
+        Library.DevicePlatform = Enum.Platform.None
+        Library.IsMobile = false
+
+        pcall(function()
+            Library.DevicePlatform = UserInputService:GetPlatform()
+        end)
+
+        Library.IsMobile = Library.DevicePlatform == Enum.Platform.Android
+            or Library.DevicePlatform == Enum.Platform.IOS
+            or (RunService:IsStudio() and UserInputService.TouchEnabled and not UserInputService.MouseEnabled)
+
+        Library.MobileButtons = { }
+        Library._MobileNextX, Library._MobileNextY = 12, 12
+        Library._MobileRowHeight = 0
+    end
+
+    local GLOW_IMAGE = "rbxassetid://18245826428"
+    local GLOW_SLICE = Rect.new(Vector2.new(21, 21), Vector2.new(79, 79))
+
+    Library.CreateGlow = function(self, Parent, Options)
+        Options = Options or { }
+        local Glow = Instances:Create("ImageLabel", {
+            Parent = Parent,
+            Name = "Glow",
+            AnchorPoint = Vector2New(0.5, 0.5),
+            BackgroundTransparency = 1,
+            Image = GLOW_IMAGE,
+            ImageColor3 = Options.Color or Library.Theme.Accent,
+            ImageTransparency = Options.Transparency or 0.35,
+            Position = UDim2New(0.5, 0, 0.5, 0),
+            Size = UDim2New(1, Options.Size or 40, 1, Options.Size or 40),
+            ScaleType = Enum.ScaleType.Slice,
+            SliceCenter = GLOW_SLICE,
+            ZIndex = Options.ZIndex or 0
+        })
+        return Glow
+    end
+
+    Library.CreateMobileButton = function(self, Text, Width, Callback)
+        if not Library.IsMobile then
+            return
+        end
+
+        local ButtonHeight = 56
+        local ButtonWidth = (Width or 60) + 44
+        local ButtonPadding = 14
+
+        local Viewport = Camera.ViewportSize
+        local function ClampToViewport(W, H, X, Y)
+            return math.clamp(X, 0, math.max(0, Viewport.X - W)),
+                math.clamp(Y, 0, math.max(0, Viewport.Y - H))
+        end
+
+        if Library._MobileNextX > 12 and Library._MobileNextX + ButtonWidth > Viewport.X - 12 then
+            Library._MobileNextX = 12
+            Library._MobileNextY = Library._MobileNextY + Library._MobileRowHeight + ButtonPadding
+            Library._MobileRowHeight = 0
+        end
+
+        local PlaceX, PlaceY = ClampToViewport(ButtonWidth, ButtonHeight, Library._MobileNextX, Library._MobileNextY)
+        Library._MobileNextX = Library._MobileNextX + ButtonWidth + ButtonPadding
+        Library._MobileRowHeight = math.max(Library._MobileRowHeight, ButtonHeight)
+
+        local Holder = Instances:Create("Frame", {
+            Parent = Library.Holder.Instance,
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            Position = UDim2New(0, PlaceX, 0, PlaceY),
+            Size = UDim2New(0, ButtonWidth, 0, ButtonHeight),
+            Name = "\0"
+        })
+
+        local Button = Instances:Create("TextButton", {
+            Parent = Holder.Instance,
+            AutoButtonColor = false,
+            BackgroundColor3 = Library.Theme.Background,
+            BorderColor3 = Library.Theme.Outline,
+            BorderSizePixel = 2,
+            Size = UDim2New(1, 0, 1, 0),
+            FontFace = Library.Font,
+            Text = Text,
+            TextColor3 = Library.Theme.Text,
+            TextSize = 17,
+            Name = "\0"
+        })
+
+        Instances:Create("UIStroke", {
+            Parent = Button.Instance,
+            Color = Library.Theme.Outline,
+            Thickness = 1,
+            LineJoinMode = Enum.LineJoinMode.Miter,
+            ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+        })
+
+        Instances:Create("UIGradient", {
+            Parent = Button.Instance,
+            Rotation = 90,
+            Color = RGBSequence{
+                RGBSequenceKeypoint(0, FromRGB(255, 255, 255)),
+                RGBSequenceKeypoint(1, FromRGB(100, 100, 100))
+            }
+        })
+
+        Library:CreateGlow(Button.Instance, {
+            Color = Library.Theme.Accent,
+            Transparency = 0.35,
+            Size = 24,
+            ZIndex = 0
+        })
+
+        local PressPos, StartPos, Dragging, Moved, ActiveInput
+        local IgnoreMouseUntil = 0
+
+        Button:Connect("InputBegan", function(Input)
+            if Input.UserInputType ~= Enum.UserInputType.MouseButton1 and Input.UserInputType ~= Enum.UserInputType.Touch then
+                return
+            end
+            if Input.UserInputType == Enum.UserInputType.MouseButton1 and os.clock() < IgnoreMouseUntil then
+                return
+            end
+            PressPos = Input.Position
+            StartPos = Holder.Instance.Position
+            Dragging = true
+            Moved = false
+            ActiveInput = Input
+
+            local StateConn
+            StateConn = Input:GetPropertyChangedSignal("UserInputState"):Connect(function()
+                if Input.UserInputState ~= Enum.UserInputState.End and Input.UserInputState ~= Enum.UserInputState.Cancel then
+                    return
+                end
+                StateConn:Disconnect()
+                if ActiveInput ~= Input then return end
+                local Ended = Input.UserInputState == Enum.UserInputState.End
+                Dragging = false
+                ActiveInput = nil
+                if Input.UserInputType == Enum.UserInputType.Touch then
+                    IgnoreMouseUntil = os.clock() + 0.5
+                end
+                if Ended and not Moved and Library:IsMouseOverFrame(Holder) then
+                    Callback(Button)
+                end
+            end)
+        end)
+
+        Button:Connect("InputChanged", function(Input)
+            if not Dragging then return end
+            if Input.UserInputType == Enum.UserInputType.MouseMovement
+                or (Input.UserInputType == Enum.UserInputType.Touch and Input == ActiveInput) then
+                local Delta = Input.Position - PressPos
+                if Delta.Magnitude >= 5 then Moved = true end
+                local TX, TY = ClampToViewport(Holder.Instance.AbsoluteSize.X, Holder.Instance.AbsoluteSize.Y, StartPos.X.Offset + Delta.X, StartPos.Y.Offset + Delta.Y)
+                Holder.Instance.Position = UDim2New(StartPos.X.Scale, TX, StartPos.Y.Scale, TY)
+            end
+        end)
+
+        TableInsert(Library.MobileButtons, { Button = Button, Holder = Holder })
+        return Button
+    end
+
     Library.Holder = Instances:Create("ScreenGui", {
         Parent = gethui(),
         Name = "\0",
@@ -790,6 +952,13 @@ local Library do
 
             Items["Watermark"]:MakeDraggable()
 
+            Library:CreateGlow(Items["Watermark"].Instance, {
+                Color = Library.Theme.Accent,
+                Transparency = 0.35,
+                Size = 28,
+                ZIndex = 0
+            })
+
             Instances:Create("UIStroke", {
                 Parent = Items["Watermark"].Instance,
                 ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
@@ -862,6 +1031,13 @@ local Library do
                 AutomaticSize = Enum.AutomaticSize.X,
                 BackgroundColor3 = FromRGB(15, 15, 20)
             })  Items["Notification"]:AddToTheme({BackgroundColor3 = "Background", BorderColor3 = "Border"})
+
+            Library:CreateGlow(Items["Notification"].Instance, {
+                Color = Library.Theme.Accent,
+                Transparency = 0.35,
+                Size = 24,
+                ZIndex = 0
+            })
 
             Instances:Create("UIStroke", {
                 Parent = Items["Notification"].Instance,
@@ -966,6 +1142,13 @@ local Library do
             })  Items["KeybindList"]:AddToTheme({BackgroundColor3 = "Background", BorderColor3 = "Border"})
 
             Items["KeybindList"]:MakeDraggable()
+
+            Library:CreateGlow(Items["KeybindList"].Instance, {
+                Color = Library.Theme.Accent,
+                Transparency = 0.35,
+                Size = 28,
+                ZIndex = 0
+            })
 
             Instances:Create("UIStroke", {
                 Parent = Items["KeybindList"].Instance,
@@ -1115,6 +1298,13 @@ Library.RigPreview = function(self, Data)
         })
         Items["Frame"]:AddToTheme({ BackgroundColor3 = "Background", BorderColor3 = "Border" })
         Items["Frame"]:MakeDraggable()
+
+        Library:CreateGlow(Items["Frame"].Instance, {
+            Color = Library.Theme.Accent,
+            Transparency = 0.4,
+            Size = 26,
+            ZIndex = 0
+        })
 
         Instances:Create("UIStroke", {
             Parent = Items["Frame"].Instance,
@@ -1570,6 +1760,13 @@ Library.RigPreview = function(self, Data)
 
             Items["ColorpickerWindow"]:MakeDraggable()
             Items["ColorpickerWindow"]:MakeResizeable(Vector2New(200, 180), Vector2New(9999, 9999))
+
+            Library:CreateGlow(Items["ColorpickerWindow"].Instance, {
+                Color = Library.Theme.Accent,
+                Transparency = 0.4,
+                Size = 22,
+                ZIndex = 0
+            })
 
             Instances:Create("UIStroke", {
                 Parent = Items["ColorpickerWindow"].Instance,
@@ -2438,9 +2635,20 @@ Library.RigPreview = function(self, Data)
     Library.Window = function(self, Data)
         Data = Data or { }
 
+        local Viewport = Camera.ViewportSize
+        local DefaultSize
+        if Library.IsMobile then
+            DefaultSize = UDim2New(
+                0, MathClamp(MathFloor(Viewport.X * 0.82), 360, 650),
+                0, MathClamp(MathFloor(Viewport.Y * 0.78), 280, 450)
+            )
+        else
+            DefaultSize = UDim2New(0, 800, 0, 585)
+        end
+
         local Window = {
             Name = Data.Name or Data.name or "Window",
-            Size = Data.Size or Data.size or UDim2New(0, 500, 0, 600),
+            Size = Data.Size or Data.size or DefaultSize,
 
             FadeSpeed = Data.FadeSpeed or Data.fadespeed or 0.25,
 
@@ -2463,7 +2671,12 @@ Library.RigPreview = function(self, Data)
                 BackgroundColor3 = FromRGB(15, 15, 20)
             })  Items["MainFrame"]:AddToTheme({BackgroundColor3 = "Background", BorderColor3 = "Border"})
 
-            Items["MainFrame"].Instance.Position = UDim2New(0, Camera.ViewportSize.X / 4, 0, Camera.ViewportSize.Y / 4)
+            if Library.IsMobile then
+                Items["MainFrame"].Instance.AnchorPoint = Vector2New(0.5, 0.5)
+                Items["MainFrame"].Instance.Position = UDim2New(0.5, 0, 0.5, 0)
+            else
+                Items["MainFrame"].Instance.Position = UDim2New(0, Camera.ViewportSize.X / 4, 0, Camera.ViewportSize.Y / 4)
+            end
 
             Items["MainFrame"]:MakeDraggable()
             Items["MainFrame"]:MakeResizeable(Vector2New(Window.Size.X.Offset, Window.Size.Y.Offset), Vector2New(9999, 9999))
@@ -2567,6 +2780,43 @@ Library.RigPreview = function(self, Data)
                 Window:SetOpen(not Window.IsOpen)
             end
         end)
+
+        Library:CreateGlow(Items["MainFrame"].Instance, {
+            Color = Library.Theme.Accent,
+            Transparency = 0.35,
+            Size = 34,
+            ZIndex = 0
+        })
+
+        if Library.IsMobile then
+            Library:CreateMobileButton("Toggle UI", 76, function()
+                Window:SetOpen(not Window.IsOpen)
+            end)
+
+            Library:CreateMobileButton("Lock", 58, function(Button)
+                local Locked = not Items["MainFrame"].Instance:GetAttribute("DragLocked")
+                Items["MainFrame"].Instance:SetAttribute("DragLocked", Locked)
+                Button.Instance.Text = Locked and "Unlock" or "Lock"
+            end)
+
+            local CamForResize = Camera
+            if CamForResize then
+                Library:Connect(CamForResize:GetPropertyChangedSignal("ViewportSize"), function()
+                    local VP = CamForResize.ViewportSize
+                    local NewW = MathClamp(MathFloor(VP.X * 0.82), 360, 650)
+                    local NewH = MathClamp(MathFloor(VP.Y * 0.78), 280, 450)
+                    Items["MainFrame"].Instance.Size = UDim2New(0, NewW, 0, NewH)
+                    for _, Rec in Library.MobileButtons do
+                        if Rec.Holder and Rec.Holder.Instance and Rec.Holder.Instance.Parent then
+                            local P = Rec.Holder.Instance.Position
+                            local TX = MathClamp(P.X.Offset, 0, math.max(0, VP.X - Rec.Holder.Instance.AbsoluteSize.X))
+                            local TY = MathClamp(P.Y.Offset, 0, math.max(0, VP.Y - Rec.Holder.Instance.AbsoluteSize.Y))
+                            Rec.Holder.Instance.Position = UDim2New(P.X.Scale, TX, P.Y.Scale, TY)
+                        end
+                    end
+                end)
+            end
+        end
 
         Window.Elements = Items
 
