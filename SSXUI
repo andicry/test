@@ -111,7 +111,7 @@ local Library do
         FontObjects = setmetatable({}, { __mode = "k" }),
         FontCache = { },
         AvailableFonts = { },
-        CurrentFontName = "Windows-XP-Tahoma",
+        CurrentFontName = "fs-tahoma-8px",
 
         CurrentColorpicker = nil
     }
@@ -425,7 +425,7 @@ local Library do
                 Position = UDim2New(1, 0, 1, 0),
                 Name = "\0",
                 BorderSizePixel = 1,
-                BackgroundTransparency = 0,
+                BackgroundTransparency = 1,
                 BackgroundColor3 = Library.Theme.Accent,
                 AutoButtonColor = false,
                 Visible = true,
@@ -531,11 +531,11 @@ local Library do
             end
         end
 
-        CustomFont:New("Windows-XP-Tahoma", 200, "Regular", {
-            Url = "https://github.com/sametexe001/luas/raw/refs/heads/main/fonts/windows-xp-tahoma.ttf"
+        CustomFont:New("fs-tahoma-8px", 400, "Normal", {
+            Url = "https://github.com/i77lhm/storage/raw/refs/heads/main/fonts/fs-tahoma-8px.ttf"
         })
 
-        Library.Font = CustomFont:Get("Windows-XP-Tahoma")
+        Library.Font = CustomFont:Get("fs-tahoma-8px")
     end
 
     do
@@ -562,7 +562,7 @@ local Library do
             { Name = "Tahoma Bold",        Url = FONT_BASE .. "tahoma_bold.ttf" },
         }
 
-        Library.FontCache["Windows-XP-Tahoma"] = Library.Font
+        Library.FontCache["fs-tahoma-8px"] = Library.Font
 
         function Library:GetFont(Name)
             if self.FontCache[Name] then
@@ -1109,10 +1109,16 @@ local Library do
                 Name = "\0",
                 Position = UDim2New(0, -5, 0, -2),
                 BorderColor3 = FromRGB(0, 0, 0),
-                Size = UDim2New(1, 10, 0, 2),
+                Size = UDim2New(0, 0, 0, 2),
                 BorderSizePixel = 0,
                 BackgroundColor3 = FromRGB(235, 157, 255)
             })  Items["AccentLine"]:AddToTheme({BackgroundColor3 = "Accent"})
+
+            Library:Connect(Items["Watermark"].Instance:GetPropertyChangedSignal("AbsoluteSize"), function()
+                local W = Items["Watermark"].Instance.AbsoluteSize.X
+                Items["AccentLine"].Instance.Size = UDim2New(0, W + 10, 0, 2)
+            end)
+            Items["AccentLine"].Instance.Size = UDim2New(0, Items["Watermark"].Instance.AbsoluteSize.X + 10, 0, 2)
 
             Instances:Create("UIGradient", {
                 Parent = Items["AccentLine"].Instance,
@@ -1271,10 +1277,16 @@ local Library do
                 Name = "\0",
                 Position = UDim2New(0, -5, 0, -5),
                 BorderColor3 = FromRGB(0, 0, 0),
-                Size = UDim2New(1, 10, 0, 2),
+                Size = UDim2New(0, 0, 0, 2),
                 BorderSizePixel = 0,
                 BackgroundColor3 = FromRGB(235, 157, 255)
             })  Items["AccentLine"]:AddToTheme({BackgroundColor3 = "Accent"})
+
+            Library:Connect(Items["KeybindList"].Instance:GetPropertyChangedSignal("AbsoluteSize"), function()
+                local W = Items["KeybindList"].Instance.AbsoluteSize.X
+                Items["AccentLine"].Instance.Size = UDim2New(0, W + 10, 0, 2)
+            end)
+            Items["AccentLine"].Instance.Size = UDim2New(0, Items["KeybindList"].Instance.AbsoluteSize.X + 10, 0, 2)
 
             Instances:Create("UIGradient", {
                 Parent = Items["AccentLine"].Instance,
