@@ -108,6 +108,10 @@ local Library do
         NotifHolder = nil,
         Font = nil,
         KeyList = nil,
+        FontObjects = setmetatable({}, { __mode = "k" }),
+        FontCache = { },
+        AvailableFonts = { },
+        CurrentFontName = "Windows-XP-Tahoma",
 
         CurrentColorpicker = nil
     }
@@ -279,6 +283,10 @@ local Library do
                 NewItem.Instance[Property] = Value
             end
 
+            if Properties.FontFace ~= nil and Library.FontObjects then
+                Library.FontObjects[NewItem.Instance] = true
+            end
+
             return NewItem
         end
 
@@ -404,45 +412,72 @@ local Library do
             local Gui = self.Instance
 
             local Resizing = false
+            local ActiveInput = nil
             local Start = UDim2New()
             local Delta = UDim2New()
             local ResizeMax = Gui.Parent.AbsoluteSize - Gui.AbsoluteSize
 
             local ResizeButton = Instances:Create("TextButton", {
-				Parent = Gui,
-				AnchorPoint = Vector2New(1, 1),
-				BorderColor3 = FromRGB(0, 0, 0),
-				Size = UDim2New(0, 8, 0, 8),
-				Position = UDim2New(1, 0, 1, 0),
+                Parent = Gui,
+                AnchorPoint = Vector2New(1, 1),
+                BorderColor3 = Library.Theme.Outline,
+                Size = UDim2New(0, 14, 0, 14),
+                Position = UDim2New(1, 0, 1, 0),
                 Name = "\0",
-				BorderSizePixel = 0,
-				BackgroundTransparency = 1,
-				AutoButtonColor = false,
+                BorderSizePixel = 1,
+                BackgroundTransparency = 0,
+                BackgroundColor3 = Library.Theme.Accent,
+                AutoButtonColor = false,
                 Visible = true,
-                Text = ""
-			})
+                Text = "",
+                ZIndex = 10
+            })
+
+            Instances:Create("UIStroke", {
+                Parent = ResizeButton.Instance,
+                Color = Library.Theme.Outline,
+                Thickness = 1,
+                LineJoinMode = Enum.LineJoinMode.Miter,
+                ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+            })
+
+            Instances:Create("UIGradient", {
+                Parent = ResizeButton.Instance,
+                Rotation = 90,
+                Color = RGBSequence{
+                    RGBSequenceKeypoint(0, FromRGB(255, 255, 255)),
+                    RGBSequenceKeypoint(1, FromRGB(100, 100, 100))
+                }
+            })
+
+            local function ApplyResize(Pos)
+                ResizeMax = Maximum or Gui.Parent.AbsoluteSize - Gui.AbsoluteSize
+                Delta = Start + UDim2New(0, Pos.X, 0, Pos.Y)
+                Delta = UDim2New(0, math.clamp(Delta.X.Offset, Minimum.X, ResizeMax.X), 0, math.clamp(Delta.Y.Offset, Minimum.Y, ResizeMax.Y))
+                Gui.Size = Delta
+            end
 
             ResizeButton:Connect("InputBegan", function(Input)
                 if Input.UserInputType == Enum.UserInputType.MouseButton1 or Input.UserInputType == Enum.UserInputType.Touch then
                     Resizing = true
-
+                    ActiveInput = Input
                     Start = Gui.Size - UDim2New(0, Input.Position.X, 0, Input.Position.Y)
                 end
             end)
 
             ResizeButton:Connect("InputEnded", function(Input)
-                if Input.UserInputType == Enum.UserInputType.MouseButton1 or Input.UserInputType == Enum.UserInputType.Touch then
+                if Input == ActiveInput or Input.UserInputType == Enum.UserInputType.MouseButton1 or Input.UserInputType == Enum.UserInputType.Touch then
                     Resizing = false
+                    ActiveInput = nil
                 end
             end)
 
             Library:Connect(UserInputService.InputChanged, function(Input)
-                if Input.UserInputType == Enum.UserInputType.MouseMovement and Resizing then
-                    ResizeMax = Maximum or Gui.Parent.AbsoluteSize - Gui.AbsoluteSize
-                    Delta = Start + UDim2New(0, Input.Position.X, 0, Input.Position.Y)
-
-                    Delta = UDim2New(0, math.clamp(Delta.X.Offset, Minimum.X, ResizeMax.X), 0, math.clamp(Delta.Y.Offset, Minimum.Y, ResizeMax.Y))
-                    Gui.Size = Delta
+                if not Resizing then return end
+                if Input.UserInputType == Enum.UserInputType.MouseMovement then
+                    ApplyResize(Input.Position)
+                elseif Input.UserInputType == Enum.UserInputType.Touch and Input == ActiveInput then
+                    ApplyResize(Input.Position)
                 end
             end)
 
@@ -501,6 +536,79 @@ local Library do
         })
 
         Library.Font = CustomFont:Get("Windows-XP-Tahoma")
+    end
+
+    do
+        local FONT_BASE = "https://github.com/i77lhm/storage/raw/refs/heads/main/fonts/"
+        local DEFAULT_URL = "https://github.com/sametexe001/luas/raw/refs/heads/main/fonts/windows-xp-tahoma.ttf"
+
+        Library.AvailableFonts = {
+            { Name = "Windows-XP-Tahoma", Url = DEFAULT_URL },
+            { Name = "Comfortaa",          Url = FONT_BASE .. "Comfortaa-Regular.ttf" },
+            { Name = "Hanken Grotesk",     Url = FONT_BASE .. "HankenGrotesk-SemiBold.ttf" },
+            { Name = "Inter Medium",       Url = FONT_BASE .. "Inter_28pt-Medium.ttf" },
+            { Name = "Inter SemiBold",     Url = FONT_BASE .. "Inter_28pt-SemiBold.ttf" },
+            { Name = "Light Modern",       Url = FONT_BASE .. "Light%20Modern.ttf" },
+            { Name = "Minecraftia",        Url = FONT_BASE .. "Minecraftia-Regular.ttf" },
+            { Name = "Proggy Clean",       Url = FONT_BASE .. "ProggyClean.ttf" },
+            { Name = "Proggy Tiny",        Url = FONT_BASE .. "ProggyTiny.ttf" },
+            { Name = "Rubik",              Url = FONT_BASE .. "Rubik-Regular.ttf" },
+            { Name = "Tahoma Modern Bold", Url = FONT_BASE .. "Tahoma-Modern-Bold.ttf" },
+            { Name = "Tahoma Modern",      Url = FONT_BASE .. "Tahoma-Modern.ttf" },
+            { Name = "Verdana",            Url = FONT_BASE .. "Verdana-Font.ttf" },
+            { Name = "fs-tahoma-8px",      Url = FONT_BASE .. "fs-tahoma-8px.ttf" },
+            { Name = "Open Sans PX",       Url = FONT_BASE .. "open-sans-px.ttf" },
+            { Name = "Smallest Pixel",     Url = FONT_BASE .. "smallest_pixel-7.ttf" },
+            { Name = "Tahoma Bold",        Url = FONT_BASE .. "tahoma_bold.ttf" },
+        }
+
+        Library.FontCache["Windows-XP-Tahoma"] = Library.Font
+
+        function Library:GetFont(Name)
+            if self.FontCache[Name] then
+                return self.FontCache[Name]
+            end
+            for _, Entry in self.AvailableFonts do
+                if Entry.Name == Name then
+                    local FontObj = CustomFont:New(Entry.Name, 400, "Normal", { Url = Entry.Url })
+                    self.FontCache[Name] = FontObj
+                    return FontObj
+                end
+            end
+            return nil
+        end
+
+        function Library:SetFont(Name)
+            local FontObj = self:GetFont(Name)
+            if not FontObj then
+                return false
+            end
+            self.Font = FontObj
+            self.CurrentFontName = Name
+            for Inst in pairs(self.FontObjects) do
+                pcall(function()
+                    Inst.FontFace = FontObj
+                end)
+            end
+            return true
+        end
+
+        function Library:GetFontNames()
+            local Names = { }
+            for _, Entry in self.AvailableFonts do
+                TableInsert(Names, Entry.Name)
+            end
+            return Names
+        end
+
+        task.spawn(function()
+            for _, Entry in Library.AvailableFonts do
+                pcall(function()
+                    Library:GetFont(Entry.Name)
+                end)
+                task.wait(0.1)
+            end
+        end)
     end
 
     do
@@ -1994,7 +2102,20 @@ Library.RigPreview = function(self, Data)
                 if Library.CurrentColorpicker and Library.CurrentColorpicker ~= Colorpicker then
                     Library.CurrentColorpicker:SetOpen(false)
                 end
-                Win.Position = UDim2New(0, Data.Parent.Instance.AbsolutePosition.X, 0, Data.Parent.Instance.AbsolutePosition.Y + 15)
+                local Button = Items["ColorpickerButton"].Instance
+                local VP = Camera.ViewportSize
+                local WinW, WinH = 238, 224
+                local PosX = Button.AbsolutePosition.X
+                local PosY = Button.AbsolutePosition.Y + Button.AbsoluteSize.Y + 5
+                if PosX + WinW > VP.X then
+                    PosX = Button.AbsolutePosition.X + Button.AbsoluteSize.X - WinW
+                end
+                if PosY + WinH > VP.Y then
+                    PosY = Button.AbsolutePosition.Y - WinH - 5
+                end
+                PosX = MathClamp(PosX, 0, math.max(0, VP.X - WinW))
+                PosY = MathClamp(PosY, 0, math.max(0, VP.Y - WinH))
+                Win.Position = UDim2New(0, PosX, 0, PosY)
                 Win.ZIndex = 10001
                 Win.Visible = true
                 for _, Value in Win:GetDescendants() do
@@ -2636,7 +2757,7 @@ Library.RigPreview = function(self, Data)
                 0, MathClamp(MathFloor(Viewport.Y * 0.78), 280, 450)
             )
         else
-            DefaultSize = UDim2New(0, 720, 0, 520)
+            DefaultSize = UDim2New(0, 600, 0, 520)
         end
 
         local Window = {
@@ -2945,7 +3066,7 @@ Library.RigPreview = function(self, Data)
                         ScrollBarImageColor3 = FromRGB(235, 157, 255),
                         Active = true,
                         AutomaticCanvasSize = Enum.AutomaticSize.Y,
-                        ScrollBarThickness = 1,
+                        ScrollBarThickness = 0,
                         Name = "\0",
                         BackgroundTransparency = 1,
                         Size = UDim2New(0, 100, 0, 100),
@@ -3176,7 +3297,7 @@ Library.RigPreview = function(self, Data)
                     ScrollBarImageColor3 = FromRGB(235, 157, 255),
                     Active = true,
                     AutomaticCanvasSize = Enum.AutomaticSize.Y,
-                    ScrollBarThickness = 1,
+                    ScrollBarThickness = 0,
                     Name = "\0",
                     BackgroundTransparency = 1,
                     Size = UDim2New(0, 100, 0, 100),
@@ -3670,7 +3791,7 @@ Library.RigPreview = function(self, Data)
             Items["Content"] = Instances:Create("ScrollingFrame", {
                 Parent = Items["Section"].Instance,
                 Name = "\0",
-                ScrollBarThickness = 3,
+                ScrollBarThickness = 0,
                 AutomaticCanvasSize = Enum.AutomaticSize.Y,
                 CanvasSize = UDim2New(0, 0, 0, 0),
                 ScrollBarImageColor3 = FromRGB(235, 157, 255),
@@ -4952,7 +5073,7 @@ Library.RigPreview = function(self, Data)
                 ScrollBarImageColor3 = FromRGB(235, 157, 255),
                 Active = true,
                 AutomaticCanvasSize = Enum.AutomaticSize.Y,
-                ScrollBarThickness = 1,
+                ScrollBarThickness = 0,
                 AnchorPoint = Vector2New(0, 1),
                 Size = UDim2New(1, 0, 1, 0),
                 Name = "\0",
