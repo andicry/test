@@ -24,7 +24,7 @@ end
 
 -- > ( global cheat variables )
 
-local file_path = getgenv().custom_folder or "club.lol recode"
+local file_path = getgenv().custom_folder or "club.lol"
 local user_input_service = cloneref(game:GetService("UserInputService"))
 local get_mouse_location = user_input_service["GetMouseLocation"]
 local players_service = cloneref(game:GetService("Players"))
@@ -44,7 +44,22 @@ local menu_scale = is_mobile and 0.7 or 1.0
 local menu_w = 720 * menu_scale
 local menu_h = 540 * menu_scale
 
--- > ( intro animation — plays on load unless "skip intro from now on" is on )
+local color3_fromrgb = Color3["fromRGB"]
+local color3_lerp = color3_fromrgb()["Lerp"]
+local vector2_new = Vector2["new"]
+local udim2_new = UDim2["new"]
+
+local math_random = math["random"]
+local clock = os["clock"]
+local delay = task["delay"]
+local spawn = task["spawn"]
+local clamp = math["clamp"]
+local floor = math["floor"]
+local wait = task["wait"]
+local sqrt = math["sqrt"]
+local type = type
+
+-- > ( intro animation — plays first, then the ui loads )
 
 do
 	local _intro_ok, _intro_err = pcall(function()
@@ -217,21 +232,6 @@ do
 		warn("[club.lol] intro skipped due to error: " .. tostring(_intro_err))
 	end
 end
-
-local color3_fromrgb = Color3["fromRGB"]
-local color3_lerp = color3_fromrgb()["Lerp"]
-local vector2_new = Vector2["new"]
-local udim2_new = UDim2["new"]
-
-local math_random = math["random"]
-local clock = os["clock"]
-local delay = task["delay"]
-local spawn = task["spawn"]
-local clamp = math["clamp"]
-local floor = math["floor"]
-local wait = task["wait"]
-local sqrt = math["sqrt"]
-local type = type
 
 local shadow_image_data = base64_decode(
 	"iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAQAAABpN6lAAAAABGdBTUEAALGPC/xhBQAAACBjSFJNAAB6JgAAgIQAAPoAAACA6AAAdTAAAOpgAAA6mAAAF3CculE8AAAAAmJLR0QA/4ePzL8AAAAJcEhZcwAADsMAAA7DAcdvqGQAAAAHdElNRQfiAQkTIxqKm+UhAAACvElEQVR42u2dzY7aMBhFjxPHEzJQBolRq77/27XSwBCSkD/PwinS7LpBVwrfeYLjI4Ozuy6Cw+HIyHBkOMCxTiIQmYnMzEQi0S9Hz/EUePIlxDpJB58YGRiZmJlTgIKCQMkLYYmwTtLhe2509AwM6QbkFJRUbKnYEChWHGCgp6WhpoF0AzI8gYodB/bs2BDI1aYPYqKn5cIZR7oPkyejoGTLgZ+888aOEq82fRAjHRdOlEBkZGTwODwvVOx55zdH9rxSqE0fxMCVMxXQ0dHS4TwZOYENO9448osDW4La9EH01GyAhhOfBHKy9Ar4JcGeA0d2Kw5QAu3yT+fJcB7IyJdn8JUtO36sOAB0vFISKNJz7+9fgelTKBAIlGrThxEI3z743Fpf/P/GAqgF1FgAtYAaC6AWUGMB1AJqLIBaQI0FUAuosQBqATUWQC2gxgKoBdRYALWAGgugFlBjAdQCaiyAWkCNBVALqLEAagE1FkAtoMYCqAXUWAC1gBoLoBZQYwHUAmosgFpAjQVQC6ixAGoBNRZALaDGAqgF1FgAtYAaC6AWUGMB1AJqLIBaQI0FUAuosQBqATUWQC2gxgKoBdRYALWAGgugFlBjAdQCaiyAWkCNBVALqLEAagE1FkAtoMYCqAXUWAC1gBoLoBZQYwHUAmosgFpAjQVQC6ixAGoBNRZALaDGAqgF1FgAtYAaC6AWUGMB1AJqLIBaQI0nfpsi7enp1VIPI53uPriaVmfT9ORAT8eVmhJWvDZ3oea6TK5OzOkGzIz3Lc4N0K04QM0HZy609IzMRM98nyI9UQHt6ic3/3JaEkzMnsjIjYYzJdA8xejqH8403BjTDRjoqHFAx+lJZnc/qOkYmP3yD9AAkY7PJxpe7hnTT2BiAGZG2ieb3p6ILj75+LqL4O7Dq245/HoDpAjx32cQ8QtpRORenSWX2AAAABl0RVh0U29mdHdhcmUAcGFpbnQubmV0IDQuMC4xOdTWsmQAAAAASUVORK5CYII="
@@ -514,7 +514,7 @@ do
 				warn("[RBXM DEBUG] Failed to download:", folder, name, url)
 				return nil
 			end
-			return data
+			return data -- always returns string, never a function
 		end
 
 		local files = {
@@ -535,7 +535,7 @@ do
 				["jaydes.png"] = safeHttp("https://raw.githubusercontent.com/panduh16/juju/main/assets/jaydes.png"),
 				["1.png"] = safeHttp("https://raw.githubusercontent.com/panduh16/juju/main/assets/1.png"),
 				["2.png"] = safeHttp("https://raw.githubusercontent.com/panduh16/juju/main/assets/2.png"),
-				["logo.png"] = safeHttp("https://lh3.googleusercontent.com/d/1dljmPaAlqN2r762fXFzmR0vNvbuZqSAv=w1000"),
+				["logo.png"] = safeHttp("https://drive.google.com/uc?export=download&id=1OO3_KxD2d5fQZUwBM5wMljJdyXOgBW52"),
 				["saturation.png"] = safeHttp(
 					"https://raw.githubusercontent.com/panduh16/juju/main/assets/saturation.png"
 				),
@@ -828,7 +828,7 @@ do
 
 		local update_proxy_size
 		update_proxy_size = LPH_NO_VIRTUALIZE(function(proxy, size)
-			if type(proxy) ~= "table" or type(proxy["real_size"]) == "number" then
+			if type(proxy) ~= "table" or type(proxy["real_size"]) == "number" then -- ??
 				return
 			end
 
@@ -1990,7 +1990,7 @@ do
 	end
 
 	local start_typing = LPH_JIT_MAX(
-		function(label, limit, callback, numbers, allow_enter, allow_all, only_on_enter)
+		function(label, limit, callback, numbers, allow_enter, allow_all, only_on_enter) -- > LOL dont ask im too lazy to rewrite this >->
 			if active_typing then
 				stop_typing()
 				return
@@ -3516,24 +3516,71 @@ do
 		tween(actives["panel"]["search_text"], { Color = menu["colors"]["active_text"] }, circular, out, 0.15)
 	end
 
-	local handle_click = LPH_JIT_MAX(function(_, state, input)
+	menu["_stop_moving"] = LPH_NO_VIRTUALIZE(function()
 		if moving then
 			moving:Disconnect()
 			moving = nil
+		end
 
-			if drag_frame["Visible"] then
-				frame["Position"] = menu_position
-				frame["Visible"] = true
-				tween(drag_frame, hide_transparency, circular, out, 0.12)
-				tween(drag_logo, hide_transparency, circular, out, 0.12)
-				tween(drag_inside, hide_transparency, circular, out, 0.12)
-				delay(0.12, function()
-					if not moving then
-						drag_frame["Visible"] = false
+		if drag_frame["Visible"] then
+			frame["Position"] = menu_position
+			frame["Visible"] = true
+			tween(drag_frame, hide_transparency, circular, out, 0.12)
+			tween(drag_logo, hide_transparency, circular, out, 0.12)
+			tween(drag_inside, hide_transparency, circular, out, 0.12)
+			delay(0.12, function()
+				if not moving then
+					drag_frame["Visible"] = false
+				end
+			end)
+		end
+	end)
+
+	menu["_start_menu_drag"] = LPH_NO_VIRTUALIZE(function(mouse_position_x, mouse_position_y)
+		local fake_menu_position = frame["real_position"]
+		local abs = math["abs"]
+
+		if moving then
+			moving:Disconnect()
+			moving = nil
+		end
+
+		moving = create_connection(run_service["RenderStepped"], function()
+			if not drag_frame["Visible"] then
+				drag_frame["Visible"] = true
+				tween(drag_frame, show_transparency, circular, out, 0.05)
+				tween(drag_logo, show_transparency, circular, out, 0.05)
+				tween(drag_inside, show_transparency, circular, out, 0.05)
+
+				drag_frame["Position"] = menu_position
+				delay(0.02, function()
+					if moving then
+						frame["Visible"] = false
 					end
 				end)
 			end
-		end
+
+			local new_mouse_position = get_mouse_location(user_input_service)
+			local new_position = udim2_new(
+				0,
+				fake_menu_position["X"] - (mouse_position_x - new_mouse_position["X"]),
+				0,
+				fake_menu_position["Y"] - (mouse_position_y - new_mouse_position["Y"])
+			)
+
+			if
+				abs(menu_position["X"]["Offset"] - new_position["X"]["Offset"]) > 1.1
+				or abs(menu_position["Y"]["Offset"] - new_position["Y"]["Offset"]) > 1.1
+			then
+				drag_frame["Position"] = new_position
+				menu_position = new_position
+			end
+		end)
+	end)
+
+	local handle_click = LPH_JIT_MAX(function(_, state, input)
+		actives["last_click_tick"] = clock()
+		menu["_stop_moving"]()
 
 		local type = input["UserInputType"]
 		if
@@ -3714,40 +3761,7 @@ do
 					end
 				end
 
-				local fake_menu_position = frame["real_position"]
-				local abs = math["abs"]
-
-				moving = create_connection(mouse["Move"], function()
-					if not drag_frame["Visible"] then
-						drag_frame["Visible"] = true
-						tween(drag_frame, show_transparency, circular, out, 0.05)
-						tween(drag_logo, show_transparency, circular, out, 0.05)
-						tween(drag_inside, show_transparency, circular, out, 0.05)
-
-						drag_frame["Position"] = menu_position
-						delay(0.02, function()
-							if moving then
-								frame["Visible"] = false
-							end
-						end)
-					end
-
-					local new_mouse_position = get_mouse_location(user_input_service)
-					local new_position = udim2_new(
-						0,
-						fake_menu_position["X"] - (mouse_position_x - new_mouse_position["X"]),
-						0,
-						fake_menu_position["Y"] - (mouse_position_y - new_mouse_position["Y"])
-					)
-
-					if
-						abs(menu_position["X"]["Offset"] - new_position["X"]["Offset"]) > 1.1
-						or abs(menu_position["Y"]["Offset"] - new_position["Y"]["Offset"]) > 1.1
-					then
-						drag_frame["Position"] = new_position
-						menu_position = new_position
-					end
-				end)
+				menu["_start_menu_drag"](mouse_position_x, mouse_position_y)
 			else
 				for object, data in connections do
 					if not object["is_rendering"] then
@@ -4127,10 +4141,7 @@ do
 	local hovering = nil
 
 	pop_menu = LPH_JIT_MAX(function(a)
-		if moving then
-			moving:Disconnect()
-			moving = nil
-		end
+		menu["_stop_moving"]()
 
 		if drag_frame["Visible"] then
 			drag_frame["Visible"] = false
@@ -4265,14 +4276,14 @@ do
 		context_action_service:BindAction(
 			context_action_click,
 			handle_click,
-			false,
+			true,
 			Enum["UserInputType"]["MouseButton1"],
 			Enum["UserInputType"]["Touch"]
 		)
 		context_action_service:BindAction(
 			context_action_scroll,
 			handle_scroll,
-			false,
+			true,
 			Enum["UserInputType"]["MouseWheel"]
 		)
 
@@ -4298,6 +4309,28 @@ do
 		user_input_service["InputBegan"],
 		LPH_NO_VIRTUALIZE(function(input, gpe)
 			local user_input_type = input["UserInputType"]
+
+			if
+				gpe
+				and menu_open
+				and not moving
+				and (user_input_type == Enum["UserInputType"]["MouseButton1"]
+					or user_input_type == Enum["UserInputType"]["Touch"])
+				and input["UserInputState"] == Enum["UserInputState"]["Begin"]
+			then
+				local mouse_position = get_mouse_location(user_input_service)
+				local mouse_position_x = mouse_position["X"]
+				local mouse_position_y = mouse_position["Y"]
+
+				if
+					mouse_position_x > menu_position["X"]["Offset"]
+					and mouse_position_x < menu_position["X"]["Offset"] + frame["Size"]["X"]
+					and mouse_position_y > menu_position["Y"]["Offset"]
+					and mouse_position_y < menu_position["Y"]["Offset"] + frame["Size"]["Y"]
+				then
+					menu["_start_menu_drag"](mouse_position_x, mouse_position_y)
+				end
+			end
 
 			if not gpe then
 				for element, keybind in keybind_data do
@@ -4325,6 +4358,14 @@ do
 	create_connection(
 		user_input_service["InputEnded"],
 		LPH_NO_VIRTUALIZE(function(input, gpe)
+			if
+				moving
+				and (input["UserInputType"] == Enum["UserInputType"]["MouseButton1"]
+					or input["UserInputType"] == Enum["UserInputType"]["Touch"])
+			then
+				menu["_stop_moving"]()
+			end
+
 			if not gpe then
 				for _, keybind in keybind_data do
 					local key = keybind["key"]
@@ -4340,6 +4381,42 @@ do
 					end
 				end
 			end
+		end)
+	)
+
+	create_connection(
+		run_service["RenderStepped"],
+		LPH_NO_VIRTUALIZE(function()
+			if not user_input_service["MouseEnabled"] then
+				return
+			end
+
+			local mouse_pressed = user_input_service:IsMouseButtonPressed(Enum["UserInputType"]["MouseButton1"])
+
+			if moving and not mouse_pressed then
+				menu["_stop_moving"]()
+			elseif
+				mouse_pressed
+				and not actives["mouse_was_pressed"]
+				and not moving
+				and menu_open
+				and clock() - (actives["last_click_tick"] or 0) > 0.08
+			then
+				local mouse_position = get_mouse_location(user_input_service)
+				local mouse_position_x = mouse_position["X"]
+				local mouse_position_y = mouse_position["Y"]
+
+				if
+					mouse_position_x > menu_position["X"]["Offset"]
+					and mouse_position_x < menu_position["X"]["Offset"] + frame["Size"]["X"]
+					and mouse_position_y > menu_position["Y"]["Offset"]
+					and mouse_position_y < menu_position["Y"]["Offset"] + frame["Size"]["Y"]
+				then
+					menu["_start_menu_drag"](mouse_position_x, mouse_position_y)
+				end
+			end
+
+			actives["mouse_was_pressed"] = mouse_pressed
 		end)
 	)
 
