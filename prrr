@@ -38,6 +38,12 @@ local workspace = workspace
 local camera = cloneref(workspace["CurrentCamera"])
 local hui = cloneref(gethui())
 
+-- > ( mobile detection — scale menu down for touch devices, keep native size on PC )
+local is_mobile = user_input_service["TouchEnabled"] and not user_input_service["MouseEnabled"]
+local menu_scale = is_mobile and 0.7 or 1.0
+local menu_w = 575 * menu_scale
+local menu_h = 450 * menu_scale
+
 local color3_fromrgb = Color3["fromRGB"]
 local color3_lerp = color3_fromrgb()["Lerp"]
 local vector2_new = Vector2["new"]
@@ -496,7 +502,7 @@ do
 		"iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAMAAAC67D+PAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAGUExURf///wAAAFXC034AAAACdFJOU/8A5bcwSgAAAAlwSFlzAAAQKAAAECgBJz8A6wAAABh0RVh0U29mdHdhcmUAUGFpbnQuTkVUIDUuMS4y+7wDtgAAALZlWElmSUkqAAgAAAAFABoBBQABAAAASgAAABsBBQABAAAAUgAAACgBAwABAAAAAgAAADEBAgAQAAAAWgAAAGmHBAABAAAAagAAAAAAAAB3mgEA6AMAAHeaAQDoAwAAUGFpbnQuTkVUIDUuMS4yAAMAAJAHAAQAAAAwMjMwAaADAAEAAAABAAAABaAEAAEAAACUAAAAAAAAAAIAAQACAAQAAABSOTgAAgAHAAQAAAAwMTAwAAAAAEyPNqYn0aVIAAAALElEQVQYV2NgBAIGCAmioQhIQACQCZaGYBAJoZGYSApgUhATYAiikJGRkREACr4AMZ+SUSoAAAAASUVORK5CYII="
 	)
 	local menu_position =
-		udim2_new(0, camera["ViewportSize"]["X"] / 2 - 575 / 2, 0, camera["ViewportSize"]["Y"] / 2 - 450 * 0.5)
+		udim2_new(0, camera["ViewportSize"]["X"] / 2 - menu_w / 2, 0, camera["ViewportSize"]["Y"] / 2 - menu_h * 0.5)
 
 	local half_transparency = { Transparency = 0.5 }
 	local stop_panel_search = nil
@@ -734,7 +740,7 @@ do
 
 	local frame = drawing_proxy["new"]("Image", {
 		["Position"] = menu_position,
-		["Size"] = udim2_new(0, 575, 0, 450),
+		["Size"] = udim2_new(0, menu_w, 0, menu_h),
 		["Color"] = menu["colors"]["background"],
 		["Rounding"] = 4,
 		["Data"] = pixel_image_data,
@@ -781,7 +787,7 @@ do
 		["Parent"] = logo,
 		["Position"] = udim2_new(1, 5, 0, 19),
 		["Size"] = 14,
-		["Visible"] = true,
+		["Visible"] = false,
 		["Transparency"] = 1,
 	})
 
@@ -861,7 +867,7 @@ do
 		["Filled"] = true,
 		["Transparency"] = 0.5,
 		["Color"] = menu["colors"]["accent"],
-		["Visible"] = true,
+		["Visible"] = false,
 	})
 
 	local search_border = drawing_proxy["new"]("Image", {
@@ -924,7 +930,7 @@ do
 
 	local drag_frame = drawing_proxy["new"]("Image", {
 		["Position"] = menu_position,
-		["Size"] = udim2_new(0, 575, 0, 450),
+		["Size"] = udim2_new(0, menu_w, 0, menu_h),
 		["Color"] = menu["colors"]["background"],
 		["Rounding"] = 4,
 		["Data"] = pixel_image_data,
@@ -1753,6 +1759,7 @@ do
 					["favorites"] = menu["favorites"],
 					["theme"] = menu["theme"],
 					["hide_on_load"] = menu["hide_on_load"],
+					["skip_intro"] = menu["skip_intro"],
 					["autoload"] = menu["autoload"],
 				})
 			)
@@ -4296,8 +4303,8 @@ do
 			end
 		end
 
-		local size = current_y_offset > 405 and udim2_new(0, 575, 0, 450 + (current_y_offset - 405))
-			or udim2_new(0, 575, 0, 450)
+		local size = current_y_offset > (405 * menu_scale) and udim2_new(0, menu_w, 0, menu_h + (current_y_offset - (405 * menu_scale)))
+			or udim2_new(0, menu_w, 0, menu_h)
 		drag_frame["Size"] = size
 		frame["Size"] = size
 	end
@@ -7430,6 +7437,21 @@ do
 				menu["saved"] = true
 			end)
 
+			-- > ( skip intro from now on — toggle next to hide on load )
+			menu_references["skip_intro"] = settings_section:create_element({
+				["name"] = "skip intro from now on",
+			}, {
+				["toggle"] = {
+					["default"] = false,
+					["flag"] = "!skip_intro",
+				},
+			})
+
+			create_connection(menu_references["skip_intro"]["on_toggle_change"], function(bool)
+				menu["skip_intro"] = bool
+				menu["saved"] = true
+			end)
+
 			settings_section:create_element({
 				["name"] = "custom kick screen",
 			}, {
@@ -8710,8 +8732,10 @@ do
 			local favorites = data["favorites"]
 			local theme = data["theme"]
 			local hide_on_load = data["hide_on_load"]
+			local skip_intro = data["skip_intro"]
 
 			menu["hide_on_load"] = hide_on_load
+			menu["skip_intro"] = skip_intro
 
 			pop_menu(true)
 
@@ -8725,6 +8749,7 @@ do
 			do_notifications = notifications or notifications == nil or false
 			menu_references["notifications"]:set_toggle(do_notifications)
 			menu_references["hide_on_load"]:set_toggle(hide_on_load)
+			menu_references["skip_intro"]:set_toggle(skip_intro)
 
 			if theme then
 				menu:load_theme(theme)
@@ -8740,6 +8765,7 @@ do
 					["notifications"] = do_notifications,
 					["favorites"] = {},
 					["hide_on_load"] = false,
+					["skip_intro"] = false,
 					["theme"] = "",
 				})
 			)
