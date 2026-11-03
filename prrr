@@ -44,6 +44,180 @@ local menu_scale = is_mobile and 0.7 or 1.0
 local menu_w = 720 * menu_scale
 local menu_h = 540 * menu_scale
 
+-- > ( intro animation — plays on load unless "skip intro from now on" is on )
+
+do
+	local _intro_ok, _intro_err = pcall(function()
+		local _data_path = file_path .. "/data.dat"
+		local _skip = false
+
+		if isfile(_data_path) then
+			local _ok, _content = pcall(readfile, _data_path)
+			if _ok and _content and _content ~= "" then
+				local _parse_ok, _data = pcall(function()
+					return http_service:JSONDecode(_content)
+				end)
+				if _parse_ok and type(_data) == "table" then
+					_skip = _data["skip_intro"] == true
+				end
+			end
+		end
+
+		if _skip then
+			return
+		end
+
+		local Players = game:GetService("Players")
+		local TweenService = game:GetService("TweenService")
+		local HttpService = game:GetService("HttpService")
+
+		local folder = "ClubIntro"
+		local fontPath = folder .. "/Comfortaa.ttf"
+		local fontFamilyPath = folder .. "/Comfortaa.font"
+
+		if not isfolder(folder) then
+			makefolder(folder)
+		end
+
+		local imageData = game:HttpGet(
+			"https://drive.google.com/uc?export=download&id=1dljmPaAlqN2r762fXFzmR0vNvbuZqSAv"
+		)
+
+		local imagePath
+
+		if imageData:sub(1, 8) == "\137PNG\r\n\26\n" then
+			imagePath = folder .. "/logo.png"
+		elseif imageData:sub(1, 3) == "\255\216\255" then
+			imagePath = folder .. "/logo.jpg"
+		else
+			error("Could not download the logo")
+		end
+
+		writefile(imagePath, imageData)
+
+		if not isfile(fontPath) then
+			local fontData = game:HttpGet(
+				"https://github.com/i77lhm/storage/raw/refs/heads/main/fonts/Comfortaa-Regular.ttf"
+			)
+
+			if type(fontData) ~= "string" or #fontData < 1024 then
+				error("Could not download Comfortaa.")
+			end
+
+			writefile(fontPath, fontData)
+		end
+
+		local descriptor = HttpService:JSONEncode({
+			name = "ClubComfortaa",
+			faces = {
+				{
+					name = "Regular",
+					weight = 400,
+					style = "Normal",
+					assetId = getcustomasset(fontPath),
+				},
+			},
+		})
+
+		writefile(fontFamilyPath, descriptor)
+
+		local comfortaa = Font.new(
+			getcustomasset(fontFamilyPath),
+			Enum.FontWeight.Regular,
+			Enum.FontStyle.Normal
+		)
+
+		local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui")
+
+		local oldIntro = playerGui:FindFirstChild("ClubIntro")
+		if oldIntro then
+			oldIntro:Destroy()
+		end
+
+		local gui = Instance.new("ScreenGui")
+		gui.Name = "ClubIntro"
+		gui.IgnoreGuiInset = true
+		gui.ResetOnSpawn = false
+		gui.DisplayOrder = 1000
+		gui.Parent = playerGui
+
+		local canvas = Instance.new("CanvasGroup")
+		canvas.Size = UDim2.fromScale(1, 1)
+		canvas.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+		canvas.BorderSizePixel = 0
+		canvas.GroupTransparency = 0
+		canvas.Parent = gui
+
+		local content = Instance.new("Frame")
+		content.AnchorPoint = Vector2.new(0.5, 0.5)
+		content.Position = UDim2.new(0.5, 0, 0.5, 16)
+		content.Size = UDim2.new(0.82, 0, 0.7, 0)
+		content.BackgroundTransparency = 1
+		content.Parent = canvas
+
+		local constraint = Instance.new("UISizeConstraint")
+		constraint.MaxSize = Vector2.new(400, 420)
+		constraint.Parent = content
+
+		local logo = Instance.new("ImageLabel")
+		logo.AnchorPoint = Vector2.new(0.5, 0.5)
+		logo.Position = UDim2.fromScale(0.5, 0.46)
+		logo.Size = UDim2.fromScale(1, 0.82)
+		logo.BackgroundTransparency = 1
+		logo.Image = getcustomasset(imagePath)
+		logo.ImageTransparency = 1
+		logo.ScaleType = Enum.ScaleType.Fit
+		logo.Parent = content
+
+		local subtitle = Instance.new("TextLabel")
+		subtitle.AnchorPoint = Vector2.new(0.5, 0)
+		subtitle.Position = UDim2.fromScale(0.5, 0.88)
+		subtitle.Size = UDim2.new(1, 0, 0, 26)
+		subtitle.BackgroundTransparency = 1
+		subtitle.FontFace = comfortaa
+		subtitle.Text = "made with precision."
+		subtitle.TextColor3 = Color3.fromRGB(175, 170, 193)
+		subtitle.TextSize = 14
+		subtitle.TextTransparency = 1
+		subtitle.Parent = content
+
+		local function animate(instance, duration, properties)
+			local animation = TweenService:Create(
+				instance,
+				TweenInfo.new(duration, Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
+				properties
+			)
+
+			animation:Play()
+			return animation
+		end
+
+		canvas.BackgroundTransparency = 1
+
+		animate(canvas, 0.35, {BackgroundTransparency = 0})
+		animate(content, 0.65, {Position = UDim2.fromScale(0.5, 0.5)})
+		animate(logo, 0.5, {ImageTransparency = 0})
+
+		task.wait(0.2)
+
+		animate(subtitle, 0.4, {TextTransparency = 0})
+
+		task.wait(1.4)
+
+		animate(logo, 0.4, {ImageTransparency = 1})
+		animate(subtitle, 0.4, {TextTransparency = 1})
+
+		local fade = animate(canvas, 0.4, {BackgroundTransparency = 1})
+		fade.Completed:Wait()
+
+		gui:Destroy()
+	end)
+
+	if not _intro_ok then
+		warn("[club.lol] intro skipped due to error: " .. tostring(_intro_err))
+	end
+end
+
 local color3_fromrgb = Color3["fromRGB"]
 local color3_lerp = color3_fromrgb()["Lerp"]
 local vector2_new = Vector2["new"]
@@ -340,7 +514,7 @@ do
 				warn("[RBXM DEBUG] Failed to download:", folder, name, url)
 				return nil
 			end
-			return data -- always returns string, never a function
+			return data
 		end
 
 		local files = {
@@ -361,7 +535,7 @@ do
 				["jaydes.png"] = safeHttp("https://raw.githubusercontent.com/panduh16/juju/main/assets/jaydes.png"),
 				["1.png"] = safeHttp("https://raw.githubusercontent.com/panduh16/juju/main/assets/1.png"),
 				["2.png"] = safeHttp("https://raw.githubusercontent.com/panduh16/juju/main/assets/2.png"),
-				["logo.png"] = safeHttp("https://lh3.googleusercontent.com/d/1YG7ZRCXWSdAxfUoKuLlistljT9C85bSP=w1000"),
+				["logo.png"] = safeHttp("https://lh3.googleusercontent.com/d/1dljmPaAlqN2r762fXFzmR0vNvbuZqSAv=w1000"),
 				["saturation.png"] = safeHttp(
 					"https://raw.githubusercontent.com/panduh16/juju/main/assets/saturation.png"
 				),
@@ -654,7 +828,7 @@ do
 
 		local update_proxy_size
 		update_proxy_size = LPH_NO_VIRTUALIZE(function(proxy, size)
-			if type(proxy) ~= "table" or type(proxy["real_size"]) == "number" then -- ??
+			if type(proxy) ~= "table" or type(proxy["real_size"]) == "number" then
 				return
 			end
 
@@ -1816,7 +1990,7 @@ do
 	end
 
 	local start_typing = LPH_JIT_MAX(
-		function(label, limit, callback, numbers, allow_enter, allow_all, only_on_enter) -- > LOL dont ask im too lazy to rewrite this >->
+		function(label, limit, callback, numbers, allow_enter, allow_all, only_on_enter)
 			if active_typing then
 				stop_typing()
 				return
@@ -8770,180 +8944,6 @@ do
 				})
 			)
 		end
-	end
-end
-
--- > ( intro animation — plays on load unless "skip intro from now on" is on )
-
-do
-	local _intro_ok, _intro_err = pcall(function()
-		local _data_path = file_path .. "/data.dat"
-		local _skip = false
-
-		if isfile(_data_path) then
-			local _ok, _content = pcall(readfile, _data_path)
-			if _ok and _content and _content ~= "" then
-				local _parse_ok, _data = pcall(function()
-					return http_service:JSONDecode(_content)
-				end)
-				if _parse_ok and type(_data) == "table" then
-					_skip = _data["skip_intro"] == true
-				end
-			end
-		end
-
-		if _skip then
-			return
-		end
-
-		local Players = game:GetService("Players")
-		local TweenService = game:GetService("TweenService")
-		local HttpService = game:GetService("HttpService")
-
-		local folder = "ClubIntro"
-		local fontPath = folder .. "/Comfortaa.ttf"
-		local fontFamilyPath = folder .. "/Comfortaa.font"
-
-		if not isfolder(folder) then
-			makefolder(folder)
-		end
-
-		local imageData = game:HttpGet(
-			"https://drive.google.com/uc?export=download&id=1dljmPaAlqN2r762fXFzmR0vNvbuZqSAv"
-		)
-
-		local imagePath
-
-		if imageData:sub(1, 8) == "\137PNG\r\n\26\n" then
-			imagePath = folder .. "/logo.png"
-		elseif imageData:sub(1, 3) == "\255\216\255" then
-			imagePath = folder .. "/logo.jpg"
-		else
-			error("Could not download the logo")
-		end
-
-		writefile(imagePath, imageData)
-
-		if not isfile(fontPath) then
-			local fontData = game:HttpGet(
-				"https://github.com/i77lhm/storage/raw/refs/heads/main/fonts/Comfortaa-Regular.ttf"
-			)
-
-			if type(fontData) ~= "string" or #fontData < 1024 then
-				error("Could not download Comfortaa.")
-			end
-
-			writefile(fontPath, fontData)
-		end
-
-		local descriptor = HttpService:JSONEncode({
-			name = "ClubComfortaa",
-			faces = {
-				{
-					name = "Regular",
-					weight = 400,
-					style = "Normal",
-					assetId = getcustomasset(fontPath),
-				},
-			},
-		})
-
-		writefile(fontFamilyPath, descriptor)
-
-		local comfortaa = Font.new(
-			getcustomasset(fontFamilyPath),
-			Enum.FontWeight.Regular,
-			Enum.FontStyle.Normal
-		)
-
-		local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui")
-
-		local oldIntro = playerGui:FindFirstChild("ClubIntro")
-		if oldIntro then
-			oldIntro:Destroy()
-		end
-
-		local gui = Instance.new("ScreenGui")
-		gui.Name = "ClubIntro"
-		gui.IgnoreGuiInset = true
-		gui.ResetOnSpawn = false
-		gui.DisplayOrder = 1000
-		gui.Parent = playerGui
-
-		local canvas = Instance.new("CanvasGroup")
-		canvas.Size = UDim2.fromScale(1, 1)
-		canvas.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-		canvas.BorderSizePixel = 0
-		canvas.GroupTransparency = 0
-		canvas.Parent = gui
-
-		local content = Instance.new("Frame")
-		content.AnchorPoint = Vector2.new(0.5, 0.5)
-		content.Position = UDim2.new(0.5, 0, 0.5, 16)
-		content.Size = UDim2.new(0.82, 0, 0.7, 0)
-		content.BackgroundTransparency = 1
-		content.Parent = canvas
-
-		local constraint = Instance.new("UISizeConstraint")
-		constraint.MaxSize = Vector2.new(400, 420)
-		constraint.Parent = content
-
-		local logo = Instance.new("ImageLabel")
-		logo.AnchorPoint = Vector2.new(0.5, 0.5)
-		logo.Position = UDim2.fromScale(0.5, 0.46)
-		logo.Size = UDim2.fromScale(1, 0.82)
-		logo.BackgroundTransparency = 1
-		logo.Image = getcustomasset(imagePath)
-		logo.ImageTransparency = 1
-		logo.ScaleType = Enum.ScaleType.Fit
-		logo.Parent = content
-
-		local subtitle = Instance.new("TextLabel")
-		subtitle.AnchorPoint = Vector2.new(0.5, 0)
-		subtitle.Position = UDim2.fromScale(0.5, 0.88)
-		subtitle.Size = UDim2.new(1, 0, 0, 26)
-		subtitle.BackgroundTransparency = 1
-		subtitle.FontFace = comfortaa
-		subtitle.Text = "made with precision."
-		subtitle.TextColor3 = Color3.fromRGB(175, 170, 193)
-		subtitle.TextSize = 14
-		subtitle.TextTransparency = 1
-		subtitle.Parent = content
-
-		local function animate(instance, duration, properties)
-			local animation = TweenService:Create(
-				instance,
-				TweenInfo.new(duration, Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
-				properties
-			)
-
-			animation:Play()
-			return animation
-		end
-
-		canvas.BackgroundTransparency = 1
-
-		animate(canvas, 0.35, {BackgroundTransparency = 0})
-		animate(content, 0.65, {Position = UDim2.fromScale(0.5, 0.5)})
-		animate(logo, 0.5, {ImageTransparency = 0})
-
-		task.wait(0.2)
-
-		animate(subtitle, 0.4, {TextTransparency = 0})
-
-		task.wait(1.4)
-
-		animate(logo, 0.4, {ImageTransparency = 1})
-		animate(subtitle, 0.4, {TextTransparency = 1})
-
-		local fade = animate(canvas, 0.4, {BackgroundTransparency = 1})
-		fade.Completed:Wait()
-
-		gui:Destroy()
-	end)
-
-	if not _intro_ok then
-		warn("[club.lol] intro skipped due to error: " .. tostring(_intro_err))
 	end
 end
 
