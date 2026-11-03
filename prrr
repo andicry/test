@@ -41,8 +41,8 @@ local hui = cloneref(gethui())
 -- > ( mobile detection — scale menu down for touch devices, keep native size on PC )
 local is_mobile = user_input_service["TouchEnabled"] and not user_input_service["MouseEnabled"]
 local menu_scale = is_mobile and 0.7 or 1.0
-local menu_w = 575 * menu_scale
-local menu_h = 450 * menu_scale
+local menu_w = 720 * menu_scale
+local menu_h = 540 * menu_scale
 
 local color3_fromrgb = Color3["fromRGB"]
 local color3_lerp = color3_fromrgb()["Lerp"]
@@ -762,9 +762,9 @@ do
 	local logo = drawing_proxy["new"]("Image", {
 		["Color"] = menu["colors"]["accent"],
 		["Data"] = readfile(file_path .. "/assets/logo.png"),
-		["Position"] = udim2_new(0, 15, 0, 15),
+		["Position"] = udim2_new(0, 25, 0, 12),
 		["Parent"] = inside,
-		["Size"] = udim2_new(0, 35, 0, 35),
+		["Size"] = udim2_new(0, 50, 0, 50),
 		["Visible"] = true,
 		["Transparency"] = 1,
 	})
@@ -776,7 +776,7 @@ do
 		["Parent"] = logo,
 		["Position"] = udim2_new(1, 5, 0, 3),
 		["Size"] = 14,
-		["Visible"] = true,
+		["Visible"] = false,
 		["Transparency"] = 1,
 	})
 
@@ -954,9 +954,9 @@ do
 	local drag_logo = drawing_proxy["new"]("Image", {
 		["Color"] = menu["colors"]["accent"],
 		["Data"] = readfile(file_path .. "/assets/logo.png"),
-		["Position"] = udim2_new(0.5, -40, 0.5, -40),
+		["Position"] = udim2_new(0.5, -55, 0.5, -55),
 		["Parent"] = drag_inside,
-		["Size"] = udim2_new(0, 80, 0, 80),
+		["Size"] = udim2_new(0, 110, 0, 110),
 		["Visible"] = true,
 		["ZIndex"] = 1002,
 		["Transparency"] = 1,
@@ -4303,7 +4303,7 @@ do
 			end
 		end
 
-		local size = current_y_offset > (405 * menu_scale) and udim2_new(0, menu_w, 0, menu_h + (current_y_offset - (405 * menu_scale)))
+		local size = current_y_offset > (486 * menu_scale) and udim2_new(0, menu_w, 0, menu_h + (current_y_offset - (486 * menu_scale)))
 			or udim2_new(0, menu_w, 0, menu_h)
 		drag_frame["Size"] = size
 		frame["Size"] = size
@@ -8770,6 +8770,180 @@ do
 				})
 			)
 		end
+	end
+end
+
+-- > ( intro animation — plays on load unless "skip intro from now on" is on )
+
+do
+	local _intro_ok, _intro_err = pcall(function()
+		local _data_path = file_path .. "/data.dat"
+		local _skip = false
+
+		if isfile(_data_path) then
+			local _ok, _content = pcall(readfile, _data_path)
+			if _ok and _content and _content ~= "" then
+				local _parse_ok, _data = pcall(function()
+					return http_service:JSONDecode(_content)
+				end)
+				if _parse_ok and type(_data) == "table" then
+					_skip = _data["skip_intro"] == true
+				end
+			end
+		end
+
+		if _skip then
+			return
+		end
+
+		local Players = game:GetService("Players")
+		local TweenService = game:GetService("TweenService")
+		local HttpService = game:GetService("HttpService")
+
+		local folder = "ClubIntro"
+		local fontPath = folder .. "/Comfortaa.ttf"
+		local fontFamilyPath = folder .. "/Comfortaa.font"
+
+		if not isfolder(folder) then
+			makefolder(folder)
+		end
+
+		local imageData = game:HttpGet(
+			"https://drive.google.com/uc?export=download&id=1dljmPaAlqN2r762fXFzmR0vNvbuZqSAv"
+		)
+
+		local imagePath
+
+		if imageData:sub(1, 8) == "\137PNG\r\n\26\n" then
+			imagePath = folder .. "/logo.png"
+		elseif imageData:sub(1, 3) == "\255\216\255" then
+			imagePath = folder .. "/logo.jpg"
+		else
+			error("Could not download the logo")
+		end
+
+		writefile(imagePath, imageData)
+
+		if not isfile(fontPath) then
+			local fontData = game:HttpGet(
+				"https://github.com/i77lhm/storage/raw/refs/heads/main/fonts/Comfortaa-Regular.ttf"
+			)
+
+			if type(fontData) ~= "string" or #fontData < 1024 then
+				error("Could not download Comfortaa.")
+			end
+
+			writefile(fontPath, fontData)
+		end
+
+		local descriptor = HttpService:JSONEncode({
+			name = "ClubComfortaa",
+			faces = {
+				{
+					name = "Regular",
+					weight = 400,
+					style = "Normal",
+					assetId = getcustomasset(fontPath),
+				},
+			},
+		})
+
+		writefile(fontFamilyPath, descriptor)
+
+		local comfortaa = Font.new(
+			getcustomasset(fontFamilyPath),
+			Enum.FontWeight.Regular,
+			Enum.FontStyle.Normal
+		)
+
+		local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui")
+
+		local oldIntro = playerGui:FindFirstChild("ClubIntro")
+		if oldIntro then
+			oldIntro:Destroy()
+		end
+
+		local gui = Instance.new("ScreenGui")
+		gui.Name = "ClubIntro"
+		gui.IgnoreGuiInset = true
+		gui.ResetOnSpawn = false
+		gui.DisplayOrder = 1000
+		gui.Parent = playerGui
+
+		local canvas = Instance.new("CanvasGroup")
+		canvas.Size = UDim2.fromScale(1, 1)
+		canvas.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+		canvas.BorderSizePixel = 0
+		canvas.GroupTransparency = 0
+		canvas.Parent = gui
+
+		local content = Instance.new("Frame")
+		content.AnchorPoint = Vector2.new(0.5, 0.5)
+		content.Position = UDim2.new(0.5, 0, 0.5, 16)
+		content.Size = UDim2.new(0.82, 0, 0.7, 0)
+		content.BackgroundTransparency = 1
+		content.Parent = canvas
+
+		local constraint = Instance.new("UISizeConstraint")
+		constraint.MaxSize = Vector2.new(400, 420)
+		constraint.Parent = content
+
+		local logo = Instance.new("ImageLabel")
+		logo.AnchorPoint = Vector2.new(0.5, 0.5)
+		logo.Position = UDim2.fromScale(0.5, 0.46)
+		logo.Size = UDim2.fromScale(1, 0.82)
+		logo.BackgroundTransparency = 1
+		logo.Image = getcustomasset(imagePath)
+		logo.ImageTransparency = 1
+		logo.ScaleType = Enum.ScaleType.Fit
+		logo.Parent = content
+
+		local subtitle = Instance.new("TextLabel")
+		subtitle.AnchorPoint = Vector2.new(0.5, 0)
+		subtitle.Position = UDim2.fromScale(0.5, 0.88)
+		subtitle.Size = UDim2.new(1, 0, 0, 26)
+		subtitle.BackgroundTransparency = 1
+		subtitle.FontFace = comfortaa
+		subtitle.Text = "made with precision."
+		subtitle.TextColor3 = Color3.fromRGB(175, 170, 193)
+		subtitle.TextSize = 14
+		subtitle.TextTransparency = 1
+		subtitle.Parent = content
+
+		local function animate(instance, duration, properties)
+			local animation = TweenService:Create(
+				instance,
+				TweenInfo.new(duration, Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
+				properties
+			)
+
+			animation:Play()
+			return animation
+		end
+
+		canvas.BackgroundTransparency = 1
+
+		animate(canvas, 0.35, {BackgroundTransparency = 0})
+		animate(content, 0.65, {Position = UDim2.fromScale(0.5, 0.5)})
+		animate(logo, 0.5, {ImageTransparency = 0})
+
+		task.wait(0.2)
+
+		animate(subtitle, 0.4, {TextTransparency = 0})
+
+		task.wait(1.4)
+
+		animate(logo, 0.4, {ImageTransparency = 1})
+		animate(subtitle, 0.4, {TextTransparency = 1})
+
+		local fade = animate(canvas, 0.4, {BackgroundTransparency = 1})
+		fade.Completed:Wait()
+
+		gui:Destroy()
+	end)
+
+	if not _intro_ok then
+		warn("[club.lol] intro skipped due to error: " .. tostring(_intro_err))
 	end
 end
 
