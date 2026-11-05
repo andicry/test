@@ -295,8 +295,8 @@ local menu = {
 	on_config_loaded = signal["new"](),
 	accent = color3_fromrgb(255, 213, 253),
 	colors = {
-		["shadow"] = color3_fromrgb(154, 213, 222),
-		["accent"] = color3_fromrgb(154, 213, 222),
+		["shadow"] = color3_fromrgb(222, 154, 207),
+		["accent"] = color3_fromrgb(222, 154, 207),
 		["active_text"] = color3_fromrgb(197, 197, 197),
 		["keybind_text"] = color3_fromrgb(197, 197, 197),
 		["border"] = color3_fromrgb(24, 25, 24),
@@ -306,13 +306,13 @@ local menu = {
 		["image"] = color3_fromrgb(89, 89, 89),
 		["section"] = color3_fromrgb(6, 6, 6),
 		["background"] = color3_fromrgb(0, 0, 0),
-		["success"] = color3_fromrgb(154, 213, 222),
+		["success"] = color3_fromrgb(222, 154, 207),
 		["error"] = color3_fromrgb(39, 60, 96),
 		["alert"] = color3_fromrgb(30, 51, 61),
-		["logo"] = color3_fromrgb(154, 213, 222),
-		["club.lol"] = color3_fromrgb(154, 213, 222),
-		["build"] = color3_fromrgb(154, 213, 222),
-		["cursor"] = color3_fromrgb(154, 213, 222),
+		["logo"] = color3_fromrgb(222, 154, 207),
+		["club.lol"] = color3_fromrgb(222, 154, 207),
+		["build"] = color3_fromrgb(222, 154, 207),
+		["cursor"] = color3_fromrgb(222, 154, 207),
 	},
 	settings = {},
 	notifications = {},
@@ -342,73 +342,59 @@ do
 			return res
 		end
 
-		local function debugRBXM(folder, name, url)
-			local ok, data = pcall(safeHttp, url)
-			if not ok or not data then
-				warn("[RBXM DEBUG] Failed to download:", folder, name, url)
-				return nil
-			end
-			return data -- always returns string, never a function
-		end
-
 		local files = {
 			["assets"] = {
-				["api.lua"] = safeHttp("https://raw.githubusercontent.com/panduh16/juju/main/assets/api.lua"),
-				["sparkle.ogg"] = safeHttp("https://raw.githubusercontent.com/panduh16/juju/main/assets/sparkle.ogg"),
-				["skeet.ogg"] = safeHttp("https://raw.githubusercontent.com/panduh16/juju/main/assets/skeet.ogg"),
-				["neverlose.ogg"] = safeHttp(
-					"https://raw.githubusercontent.com/panduh16/juju/main/assets/neverlose.ogg"
-				),
-				["break.ogg"] = safeHttp("https://raw.githubusercontent.com/panduh16/juju/main/assets/break.ogg"),
-				["mc bow.ogg"] = safeHttp("https://raw.githubusercontent.com/panduh16/juju/main/assets/mc%20bow.ogg"),
-				["primordial.ogg"] = safeHttp(
-					"https://raw.githubusercontent.com/panduh16/juju/main/assets/primordial.ogg"
-				),
-				["rust.ogg"] = safeHttp("https://raw.githubusercontent.com/panduh16/juju/main/assets/rust.ogg"),
-				["sexy.ogg"] = safeHttp("https://raw.githubusercontent.com/panduh16/juju/main/assets/sexy.ogg"),
-				["jaydes.png"] = safeHttp("https://raw.githubusercontent.com/panduh16/juju/main/assets/jaydes.png"),
-				["1.png"] = safeHttp("https://raw.githubusercontent.com/panduh16/juju/main/assets/1.png"),
-				["2.png"] = safeHttp("https://raw.githubusercontent.com/panduh16/juju/main/assets/2.png"),
-				["logo.png"] = safeHttp("https://drive.google.com/uc?export=download&id=1OO3_KxD2d5fQZUwBM5wMljJdyXOgBW52"),
-				["saturation.png"] = safeHttp(
-					"https://raw.githubusercontent.com/panduh16/juju/main/assets/saturation.png"
-				),
+				["api.lua"] = "https://raw.githubusercontent.com/panduh16/juju/main/assets/api.lua",
+				["sparkle.ogg"] = "https://raw.githubusercontent.com/panduh16/juju/main/assets/sparkle.ogg",
+				["skeet.ogg"] = "https://raw.githubusercontent.com/panduh16/juju/main/assets/skeet.ogg",
+				["neverlose.ogg"] = "https://raw.githubusercontent.com/panduh16/juju/main/assets/neverlose.ogg",
+				["break.ogg"] = "https://raw.githubusercontent.com/panduh16/juju/main/assets/break.ogg",
+				["mc bow.ogg"] = "https://raw.githubusercontent.com/panduh16/juju/main/assets/mc%20bow.ogg",
+				["primordial.ogg"] = "https://raw.githubusercontent.com/panduh16/juju/main/assets/primordial.ogg",
+				["rust.ogg"] = "https://raw.githubusercontent.com/panduh16/juju/main/assets/rust.ogg",
+				["sexy.ogg"] = "https://raw.githubusercontent.com/panduh16/juju/main/assets/sexy.ogg",
+				["jaydes.png"] = "https://raw.githubusercontent.com/panduh16/juju/main/assets/jaydes.png",
+				["1.png"] = "https://raw.githubusercontent.com/panduh16/juju/main/assets/1.png",
+				["2.png"] = "https://raw.githubusercontent.com/panduh16/juju/main/assets/2.png",
+				["logo.png"] = "https://drive.google.com/uc?export=download&id=1OO3_KxD2d5fQZUwBM5wMljJdyXOgBW52",
+				["saturation.png"] = "https://raw.githubusercontent.com/panduh16/juju/main/assets/saturation.png",
 			},
 			["custom"] = {
-				["textures.json"] = safeHttp(
-					"https://raw.githubusercontent.com/panduh16/juju/main/assets/textures.json"
-				),
-				["character.rbxm"] = debugRBXM(
-					"custom",
-					"character.rbxm",
-					"https://raw.githubusercontent.com/panduh16/juju/main/assets/character.rbxm"
-				),
-				["pinksky.rbxm"] = debugRBXM(
-					"custom",
-					"pinksky.rbxm",
-					"https://raw.githubusercontent.com/panduh16/juju/main/assets/pinksky.rbxm"
-				),
-				["crunch.ogg"] = safeHttp("https://raw.githubusercontent.com/panduh16/juju/main/assets/juju.ogg"),
-				["scar.ogg"] = safeHttp("https://raw.githubusercontent.com/panduh16/juju/main/assets/scar.ogg"),
-				["x hit.rbxm"] = debugRBXM(
-					"custom",
-					"x hit.rbxm",
-					"https://raw.githubusercontent.com/panduh16/juju/main/assets/x%20hit.rbxm"
-				),
-				["blossom aura.rbxm"] = debugRBXM(
-					"custom",
-					"blossom aura.rbxm",
-					"https://raw.githubusercontent.com/panduh16/juju/main/assets/blossom%20aura.rbxm"
-				),
-				["spam.json"] = safeHttp("https://raw.githubusercontent.com/panduh16/juju/main/assets/spam.json"),
+				["textures.json"] = "https://raw.githubusercontent.com/panduh16/juju/main/assets/textures.json",
+				["character.rbxm"] = "https://raw.githubusercontent.com/panduh16/juju/main/assets/character.rbxm",
+				["pinksky.rbxm"] = "https://raw.githubusercontent.com/panduh16/juju/main/assets/pinksky.rbxm",
+				["crunch.ogg"] = "https://raw.githubusercontent.com/panduh16/juju/main/assets/juju.ogg",
+				["scar.ogg"] = "https://raw.githubusercontent.com/panduh16/juju/main/assets/scar.ogg",
+				["x hit.rbxm"] = "https://raw.githubusercontent.com/panduh16/juju/main/assets/x%20hit.rbxm",
+				["blossom aura.rbxm"] = "https://raw.githubusercontent.com/panduh16/juju/main/assets/blossom%20aura.rbxm",
+				["spam.json"] = "https://raw.githubusercontent.com/panduh16/juju/main/assets/spam.json",
 			},
 			["themes"] = {
-				["default.th"] = safeHttp("https://raw.githubusercontent.com/panduh16/juju/main/assets/default.th"),
+				["default.th"] = "https://raw.githubusercontent.com/panduh16/juju/main/assets/default.th",
 			},
 			["addons"] = {},
 			["configs"] = {},
 			["data.dat"] = [[{"notifications":true,"theme":"","favorites":[]}]],
 		}
+
+		-- download every asset at the same time instead of one after another
+		local pending = 0
+
+		for folder, entries in files do
+			if type(entries) == "table" then
+				for name, url in entries do
+					pending += 1
+					task.spawn(function()
+						files[folder][name] = safeHttp(url)
+						pending -= 1
+					end)
+				end
+			end
+		end
+
+		while pending > 0 do
+			task.wait()
+		end
 		if not isfolder(file_path) then
 			makefolder(file_path)
 		end
@@ -783,7 +769,7 @@ do
 		["Color"] = color3_fromrgb(255, 255, 255),
 		["Text"] = getgenv().script_name or "club.lol",
 		["Parent"] = logo,
-		["Position"] = udim2_new(1, 5, 0, 3),
+		["Position"] = udim2_new(0, 0, 1, 4),
 		["Size"] = 14,
 		["Visible"] = true,
 		["Transparency"] = 1,
@@ -794,7 +780,7 @@ do
 		["Color"] = menu["colors"]["accent"],
 		["Text"] = getgenv().script_version or "live",
 		["Parent"] = logo,
-		["Position"] = udim2_new(1, 5, 0, 19),
+		["Position"] = udim2_new(0, 0, 1, 19),
 		["Size"] = 14,
 		["Visible"] = true,
 		["Transparency"] = 1,
@@ -1591,6 +1577,8 @@ do
 	local click_connections = {}
 	local hovering_objects = {}
 	local active_typing = nil
+	local typing_connection = nil
+	local binding_connection = nil
 
 	local type_line = drawing_proxy["new"]("Square", {
 		["Position"] = udim2_new(0, 0, 0, 0),
@@ -1788,7 +1776,10 @@ do
 			type_line["Visible"] = false
 		end
 
-		context_action_service:UnbindAction(context_action_typing)
+		if typing_connection then
+			typing_connection:Disconnect()
+			typing_connection = nil
+		end
 	end
 
 	local stop_search = function()
@@ -1839,14 +1830,12 @@ do
 
 			old_text = label["Text"]
 
-			local items = Enum["KeyCode"]:GetEnumItems()
-
-			local backspace = Enum["KeyCode"]["Backspace"]
+		local backspace = Enum["KeyCode"]["Backspace"]
 			local enter = Enum["KeyCode"]["Return"]
 			local shift = Enum["KeyCode"]["LeftShift"]
 
-			context_action_service:BindAction(context_action_typing, function(_, state, input)
-				if state == Enum["UserInputState"]["Begin"] then
+			typing_connection = create_connection(user_input_service["InputBegan"], function(input, _)
+				do -- works even when the roblox menu is open or a game gui has input focus
 					local keycode = input["KeyCode"]
 					local is_enter = keycode == enter
 					local last_input = current_input
@@ -1924,7 +1913,7 @@ do
 						end
 					end
 				end
-			end, false, unpack(items))
+			end)
 
 			label["Text"] = ""
 		end
@@ -2122,7 +2111,11 @@ do
 	end
 
 	local stop_binding = function(key)
-		context_action_service:UnbindCoreAction(context_action_typing_core)
+		if binding_connection then
+			binding_connection:Disconnect()
+			binding_connection = nil
+		end
+
 		tween(
 			actives["binding"]["drawings"]["keybind_text"],
 			{ ["Color"] = menu["colors"]["dark_text"] },
@@ -2152,16 +2145,11 @@ do
 
 		local escape = Enum["KeyCode"]["Escape"]
 		local tilde = Enum["KeyCode"]["Tilde"]
-		local items = Enum["KeyCode"]:GetEnumItems()
 
-		for _, a in Enum["UserInputType"]:GetEnumItems() do
-			items[#items + 1] = a
-		end
-
-		context_action_service:BindCoreAction(context_action_typing_core, function(_, state, input)
+		binding_connection = create_connection(user_input_service["InputBegan"], function(input, _)
 			local key = shortened_characters[input["UserInputType"]] and input["UserInputType"] or input["KeyCode"]
 
-			if state == Enum["UserInputState"]["Begin"] and key ~= Enum["KeyCode"]["Unknown"] then
+			if key ~= Enum["KeyCode"]["Unknown"] then
 				if key == escape or key == tilde then
 					key = nil
 				end
@@ -2170,7 +2158,7 @@ do
 
 				stop_binding()
 			end
-		end, false, unpack(items))
+		end)
 
 		tween(keybind_text, { Color = menu["colors"]["accent"] }, circular, out, 0.17)
 	end
@@ -4634,14 +4622,15 @@ do
 			return nil
 		end
 
-		local new_section = setmetatable({
-			["tab"] = tab,
-			["name"] = name,
-			["side"] = side,
-			["size"] = size,
-			["total_y_size"] = 10,
-			["elements"] = {},
-		}, section)
+	local new_section = setmetatable({
+		["tab"] = tab,
+		["name"] = name,
+		["side"] = side,
+		["size"] = size,
+		["total_y_size"] = 10,
+		["scroll_index"] = 1,
+		["elements"] = {},
+	}, section)
 
 		local tab_frame = tab["frame"]
 		local y_position = y_position or 0
@@ -4879,9 +4868,7 @@ do
 		end)
 
 		create_scroll_connection(section_border, section_border, function(is_up)
-			local old_scroll_index = new_section["scroll_index"]
-			new_section["scroll_index"] =
-				clamp(old_scroll_index + (is_up and -1 or 1), 1, 1 + clamp(#new_section["elements"] - 13, 0, 1000))
+			new_section["scroll_index"] = (new_section["scroll_index"] or 1) + (is_up and -1 or 1)
 			new_section:update_position()
 		end)
 
@@ -6442,12 +6429,19 @@ do
 		if not self["side"] then
 			self["border"]["Size"] = udim2_new(0, 170, 0, self["total_y_size"] + 7)
 			self["inside"]["Size"] = udim2_new(1, -2, 1, -2)
+		else
+			self:update_position()
 		end
 
 		return new_element
 	end
 
 	function section:recalculate_size()
+		if self["side"] then
+			self:update_position()
+			return
+		end
+
 		local elements = self["elements"]
 		local total_size = 10
 
@@ -6459,12 +6453,69 @@ do
 			end
 		end
 
-		if not self["side"] then
-			self["border"]["Size"] = udim2_new(0, 170, 0, total_size + 7)
-			self["inside"]["Size"] = udim2_new(1, -2, 1, -2)
+		self["border"]["Size"] = udim2_new(0, 170, 0, total_size + 7)
+		self["inside"]["Size"] = udim2_new(1, -2, 1, -2)
+		self["total_y_size"] = total_size
+	end
+
+	-- side sections are fixed size: instead of elements overflowing outside the
+	-- section, they get scrolled with the scroll wheel. anything that would render
+	-- outside the section is hidden, and there is no visible scrollbar
+	function section:update_position()
+		local elements = self["elements"]
+
+		local visible = {}
+		local total_content = 10
+
+		for i = 1, #elements do
+			local element = elements[i]
+			if element["visible"] then
+				visible[#visible + 1] = element
+				total_content += element["total_y_size"]
+			end
 		end
 
-		self["total_y_size"] = total_size
+		local inside_height = self["inside"]["real_size"]["Y"]
+		local scroll_index = self["scroll_index"] or 1
+
+		if total_content > inside_height then
+			local bottom = 10
+			local max_scroll = 1
+
+			for i = #visible, 1, -1 do
+				bottom += visible[i]["total_y_size"]
+
+				if bottom >= inside_height then
+					max_scroll = i
+					break
+				end
+			end
+
+			scroll_index = clamp(scroll_index, 1, max_scroll)
+		else
+			scroll_index = 1
+		end
+
+		self["scroll_index"] = scroll_index
+
+		local shift = 0
+
+		for i = 1, scroll_index - 1 do
+			shift += visible[i]["total_y_size"]
+		end
+
+		local y = 10
+
+		for i = 1, #visible do
+			local element = visible[i]
+			local draw_y = y - shift
+			local clipped = draw_y < 0 or draw_y + element["total_y_size"] > inside_height
+
+			element["clipped"] = clipped
+			element["frame"]["Position"] = udim2_new(0, 10, 0, draw_y)
+			element["frame"]["Visible"] = element["visible"] and not clipped
+			y += element["total_y_size"]
+		end
 	end
 
 	function section:destroy()
