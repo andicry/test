@@ -5347,6 +5347,12 @@ do
 				new_element["drawings"]["toggle_inside"] = toggle_inside
 				new_element["drawings"]["checkmark"] = checkmark
 
+				if properties["align_right"] then
+					toggle_border["Position"] = udim2_new(1, -12, 0, 0)
+					toggle_inside["Position"] = udim2_new(0, 1, 0, 1)
+					toggle_click["Size"] = udim2_new(1, 0, 1, 0)
+				end
+
 				create_hover_connection(parent, toggle_click, function()
 					tween(toggle_border, { Color = menu["colors"]["highlighted"] }, circular, out, 0.17)
 				end, function()
@@ -5500,6 +5506,181 @@ do
 				end
 
 				new_element:set_slider(properties["default"] or properties["min"])
+			elseif element == "dual_slider" then
+				total_y_size += 14
+
+				local dual_border = drawing_proxy["new"]("Image", {
+					["Parent"] = frame,
+					["Position"] = udim2_new(0, 0, 0, 14),
+					["Size"] = udim2_new(1, 0, 0, 12),
+					["Color"] = menu["colors"]["border"],
+					["Transparency"] = 1,
+					["Rounding"] = 4,
+					["Data"] = pixel_image_data,
+					["ZIndex"] = zindex + 1,
+					["Visible"] = true,
+				})
+				local dual_inside = drawing_proxy["new"]("Image", {
+					["Parent"] = dual_border,
+					["Position"] = udim2_new(0, 1, 0, 1),
+					["Size"] = udim2_new(1, -2, 1, -2),
+					["Color"] = menu["colors"]["background"],
+					["Rounding"] = 4,
+					["Data"] = pixel_image_data,
+					["Transparency"] = 1,
+					["ZIndex"] = zindex + 2,
+					["Visible"] = true,
+				})
+				local dual_fill = drawing_proxy["new"]("Image", {
+					["Parent"] = dual_inside,
+					["Position"] = udim2_new(0, 0, 0, 0),
+					["Size"] = udim2_new(0, 0, 1, 0),
+					["Color"] = menu["colors"]["accent"],
+					["Rounding"] = 2,
+					["Data"] = pixel_image_data,
+					["Transparency"] = 0.5,
+					["ZIndex"] = zindex + 3,
+					["Visible"] = true,
+				})
+				local dual_handle_min = drawing_proxy["new"]("Square", {
+					["Parent"] = dual_inside,
+					["Position"] = udim2_new(0, 0, 0, 0),
+					["Size"] = udim2_new(0, 1, 1, 0),
+					["Color"] = menu["colors"]["accent"],
+					["Visible"] = true,
+					["Filled"] = true,
+					["Transparency"] = 1,
+					["ZIndex"] = zindex + 4,
+				})
+				local dual_handle_max = drawing_proxy["new"]("Square", {
+					["Parent"] = dual_inside,
+					["Position"] = udim2_new(1, 0, 0, 0),
+					["Size"] = udim2_new(0, 1, 1, 0),
+					["Color"] = menu["colors"]["accent"],
+					["Visible"] = true,
+					["Filled"] = true,
+					["Transparency"] = 1,
+					["ZIndex"] = zindex + 4,
+				})
+				local dual_text = drawing_proxy["new"]("Text", {
+					["Color"] = menu["colors"]["dark_text"],
+					["Text"] = "",
+					["Size"] = 12,
+					["Font"] = 1,
+					["Transparency"] = 1,
+					["Visible"] = true,
+					["Parent"] = frame,
+					["ZIndex"] = zindex + 5,
+					["Position"] = udim2_new(0, 7, 0, -1),
+				})
+
+				new_element["drawings"]["dual_border"] = dual_border
+				new_element["drawings"]["dual_inside"] = dual_inside
+				new_element["drawings"]["dual_fill"] = dual_fill
+				new_element["drawings"]["dual_handle_min"] = dual_handle_min
+				new_element["drawings"]["dual_handle_max"] = dual_handle_max
+				new_element["drawings"]["dual_text"] = dual_text
+
+				new_element["on_dual_change"] = signal["new"]()
+				new_element["dual_flag_min"] = properties["flag_min"]
+				new_element["dual_flag_max"] = properties["flag_max"]
+
+				local dual_min_value = properties["min"] or 0
+				local dual_max_value = properties["max"] or properties["min"]
+				local dual_decimals = properties["decimals"] or 0
+				local dual_suffix = properties["suffix"] or ""
+				local dual_current_min = properties["default_min"] or dual_min_value
+				local dual_current_max = properties["default_max"] or dual_max_value
+				new_element["dual_min"] = dual_min_value
+				new_element["dual_max"] = dual_max_value
+
+				local function dual_number_text(value)
+					return tostring(round(value, dual_decimals))
+				end
+
+				local function dual_mouse_value(mouse_x)
+					local width = dual_inside["real_size"]["X"]
+					if width <= 0 then return dual_min_value end
+					local percent = (mouse_x - dual_inside["real_position"]["X"]) / width
+					return dual_min_value + (dual_max_value - dual_min_value) * percent
+				end
+
+				local function dual_update_values(min_value, max_value, dragging)
+					min_value = clamp(tonumber(min_value) or dual_min_value, dual_min_value, dual_max_value)
+					max_value = clamp(tonumber(max_value) or dual_max_value, dual_min_value, dual_max_value)
+					if dragging == "min" then
+						min_value = math.min(min_value, max_value)
+					elseif dragging == "max" then
+						max_value = math.max(min_value, max_value)
+					elseif min_value > max_value then
+						min_value = max_value
+					end
+					dual_current_min, dual_current_max = round(min_value, dual_decimals), round(max_value, dual_decimals)
+					local spread = dual_max_value - dual_min_value
+					local start = spread <= 0 and 0 or (dual_current_min - dual_min_value) / spread
+					local stop = spread <= 0 and 0 or (dual_current_max - dual_min_value) / spread
+					dual_fill["Position"] = udim2_new(start, 0, 0, 0)
+					dual_fill["Size"] = udim2_new(math.max(0, stop - start), 0, 1, 0)
+					dual_handle_min["Position"] = udim2_new(start, 0, 0, 0)
+					dual_handle_max["Position"] = udim2_new(stop, 0, 0, 0)
+					dual_text["Text"] = dual_number_text(dual_current_min)
+						.. dual_suffix
+						.. " - "
+						.. dual_number_text(dual_current_max)
+						.. dual_suffix
+					pcall(function()
+						local value_width = dual_text["TextBounds"]["X"]
+						local label_width = text and text["TextBounds"]["X"] or 0
+						local frame_width = frame["real_size"]["X"]
+						if frame_width - value_width >= label_width + 10 then
+							dual_text["Position"] = udim2_new(1, -value_width, 0, -1)
+						else
+							dual_text["Position"] = udim2_new(0, label_width + 7, 0, -1)
+						end
+					end)
+					local min_flag = properties["flag_min"]
+					local max_flag = properties["flag_max"]
+					if min_flag then flags[min_flag] = dual_current_min end
+					if max_flag then flags[max_flag] = dual_current_max end
+					new_element["on_dual_change"]:Fire(dual_current_min, dual_current_max)
+				end
+
+				new_element["set_dual"] = function(_, min_value, max_value)
+					dual_update_values(min_value, max_value, nil)
+				end
+
+				if type(flags[properties["flag_min"]]) == "number" then
+					dual_current_min = flags[properties["flag_min"]]
+				end
+				if type(flags[properties["flag_max"]]) == "number" then
+					dual_current_max = flags[properties["flag_max"]]
+				end
+				dual_update_values(dual_current_min, dual_current_max, nil)
+
+				create_hover_connection(parent, dual_border, function()
+					tween(dual_border, { Color = menu["colors"]["highlighted"] }, circular, out, 0.17)
+				end, function()
+					tween(dual_border, { Color = menu["colors"]["border"] }, circular, out, 0.17)
+				end)
+
+				create_click_connection(parent, dual_border, function(mouse_position)
+					local center_x = dual_inside["real_position"]["X"] + dual_inside["real_size"]["X"] * 0.5
+					if (mouse_position["X"] or 0) < center_x then
+						dual_update_values(dual_mouse_value(mouse_position["X"]), dual_current_max, "min")
+						moving = create_move_connection(function()
+							dual_update_values(dual_mouse_value(get_mouse_location(user_input_service)["X"]), dual_current_max, "min")
+						end)
+					else
+						dual_update_values(dual_current_min, dual_mouse_value(mouse_position["X"]), "max")
+						moving = create_move_connection(function()
+							dual_update_values(dual_current_min, dual_mouse_value(get_mouse_location(user_input_service)["X"]), "max")
+						end)
+					end
+				end)
+
+				create_right_click_connection(parent, dual_border, function(position)
+					open_context({ 1 }, new_element, position)
+				end)
 			elseif element == "textbox" then
 				total_y_size += 18
 
