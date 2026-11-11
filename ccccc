@@ -526,6 +526,7 @@ do
 	local set_active_tab = nil
 	local theme_section = nil
 	local close_context = nil
+	local close_settings = nil
 	local menu_open = true
 	local menu_locked = false
 	local menu_tick = clock()
@@ -569,10 +570,28 @@ do
 					["skip"] = class == "Circle",
 					["no_scale"] = false,
 					["visible"] = false,
-					["destroy"] = function()
-						object:Destroy()
-					end,
 				}, drawing_proxy)
+
+				-- assigned after the table exists so the closure can capture it.
+				-- unparent first so the old parent's layout pass stops touching
+				-- this drawing, then free the real object
+				proxy["destroy"] = function()
+					local old_parent = rawget(proxy, "parent")
+
+					if old_parent then
+						local old_children = old_parent["children"]
+						for i = #old_children, 1, -1 do
+							if old_children[i] == proxy then
+								remove(old_children, i)
+								break
+							end
+						end
+
+						proxy["parent"] = false
+					end
+
+					object:Destroy()
+				end
 
 				-- exclude from the mobile menu scale before any property is applied
 				local no_scale = properties["no_scale"]
@@ -611,10 +630,28 @@ do
 				["skip"] = class == "Circle",
 				["no_scale"] = false,
 				["visible"] = false,
-				["destroy"] = function()
-					object:Destroy()
-				end,
 			}, drawing_proxy)
+
+			-- assigned after the table exists so the closure can capture it.
+			-- unparent first so the old parent's layout pass stops touching
+			-- this drawing, then free the real object
+			proxy["destroy"] = function()
+				local old_parent = rawget(proxy, "parent")
+
+				if old_parent then
+					local old_children = old_parent["children"]
+					for i = #old_children, 1, -1 do
+						if old_children[i] == proxy then
+							remove(old_children, i)
+							break
+						end
+					end
+
+					proxy["parent"] = false
+				end
+
+				object:Destroy()
+			end
 
 			-- exclude from the mobile menu scale before any property is applied
 			local no_scale = properties["no_scale"]
@@ -725,6 +762,21 @@ do
 				self["position"] = value
 				update_proxy_position(self, value)
 			elseif property == "Parent" then
+				-- detach from the previous parent, otherwise a destroyed or
+				-- reparented drawing stayed in the old parent's child list and
+				-- kept getting repositioned / shown forever
+				local old_parent = rawget(self, "parent")
+
+				if old_parent then
+					local old_children = old_parent["children"]
+					for i = 1, #old_children do
+						if old_children[i] == self then
+							remove(old_children, i)
+							break
+						end
+					end
+				end
+
 				if value then
 					local children = value["children"]
 					children[#children + 1] = self
@@ -1293,8 +1345,16 @@ do
 		end
 
 		local drawings = list_drawings[keybind]
+
+		if not drawings then
+			return
+		end
+
 		local frame = drawings["frame"]
-		local y = 24 + (found - 1) * 21
+
+		-- just_visual lookups may not have an index (the bind was never added
+		-- to active_binds), and `found - 1` used to error on nil
+		local y = 24 + ((found or 1) - 1) * 21
 
 		frame["Position"] = udim2_new(0, -5, 0, y)
 		tween(frame, { Transparency = 0 or 0.2, tween_position = udim2_new(0, 0, 0, y) }, circular, out, 0.15)
@@ -1321,7 +1381,12 @@ do
 			end
 
 			for i = 1, #active_binds do
-				local frame = list_drawings[active_binds[i]]["frame"]
+				local bind_frame = list_drawings[active_binds[i]]
+				if not bind_frame then
+					continue
+				end
+
+				local frame = bind_frame["frame"]
 				local old_position = frame["tween_position"]
 				local new_position = udim2_new(0, 0, 0, 24 + (i - 1) * 21)
 
@@ -1879,6 +1944,16 @@ do
 
 	local open_settings = function(settings)
 		local border = settings["border"]
+
+		-- only one panel may be open. without this, opening the theme panel while
+		-- the settings panel was up drew both on top of each other (they share
+		-- the same parent, so the older one was never closed)
+		local previous = actives["settings"]
+
+		if previous and previous ~= settings then
+			close_settings(previous)
+		end
+
 		for _, element in settings["elements"] do
 			for _, drawing in element["drawings"] do
 				tween(
@@ -1898,34 +1973,34 @@ do
 		end
 
 		local position = border["real_position"]
-		local x_position = position["X"] + 30
 		local screen_size = camera["ViewportSize"]
 		local x_size = screen_size["X"]
 		local y_size = screen_size["Y"]
+		local border_size = border["real_size"]
 
-		local x_overlap = (x_position + border["real_size"]["X"]) - x_size
-		local y_overlap = (position["Y"] + border["real_size"]["Y"]) - y_size
+		-- the panel opens at (1, 5, 0, 0) relative to the settings icon, so its
+		-- left edge never moves; only the y offset changes (-5 -> 0). measure
+		-- the open rect from the live position and correct only as far as the
+		-- screen actually requires, otherwise the panel drifts left on its own
+		local open_x = position["X"]
+		-- closed offset is (0, -5); fully open it is (0, 0)
+		local open_y = position["Y"] + 5
 
-		if x_overlap > 0 then
-			x_position -= (x_overlap + 5)
-		elseif x_overlap < -x_size then
-			x_position += (-x_overlap + 5)
-		else
-			x_overlap = 0
+		local x_correction = math["max"](0, (open_x + border_size["X"]) - (x_size - 5))
+		local y_correction = math["max"](0, (open_y + border_size["Y"]) - (y_size - 5))
+
+		if open_x - x_correction < 5 then
+			x_correction = open_x - 5
 		end
 
-		if y_overlap > 0 then
-			position -= vector2_new(0, y_overlap + 5)
-		elseif y_overlap < -y_size then
-			position += vector2_new(0, y_overlap - 5)
-		else
-			y_overlap = 0
+		if open_y - y_correction < 5 then
+			y_correction = open_y - 5
 		end
 
 		tween(settings["inside"], show_transparency, circular, out, 0.15)
 		tween(
 			border,
-			{ tween_position = udim2_new(1, 5 - x_overlap, 0, -y_overlap), Transparency = 1 },
+			{ tween_position = udim2_new(1, 5 - x_correction, 0, -y_correction), Transparency = 1 },
 			circular,
 			out,
 			0.15
@@ -1934,7 +2009,7 @@ do
 		actives["settings"] = settings
 	end
 
-	local close_settings = function(settings)
+	close_settings = function(settings)
 		local border = settings["border"]
 		for _, element in settings["elements"] do
 			for _, drawing in element["drawings"] do
@@ -1990,8 +2065,10 @@ do
 		click_connections[search_out] = nil
 		hover_connections[search_out] = nil
 
-		for _, child in children do
-			children[_] = nil
+		-- iterate backwards so removing entries cannot skip any of them
+		for i = #children, 1, -1 do
+			local child = children[i]
+			children[i] = nil
 			child:Destroy()
 		end
 
@@ -2127,8 +2204,9 @@ do
 		hover_connections[search_out] = nil
 		click_connections[search_out] = nil
 
-		for _, child in children do
-			children[_] = nil
+		for i = #children, 1, -1 do
+			local child = children[i]
+			children[i] = nil
 			child:Destroy()
 		end
 
@@ -2399,40 +2477,39 @@ do
 			0.15
 		)
 		tween(dropdown_inside, hide_transparency, circular, out, 0.15)
-		local connections = click_connections[dropdown_border]
 
-		if connections then
-			for object, callback in connections do
-				click_connections[object] = nil
-			end
-			click_connections[dropdown_border] = nil
-		end
-
-		local connections = hover_connections[dropdown_border]
-
-		if connections then
-			for object, callback in hover_connections[dropdown_border] do
-				hover_connections[object] = nil
-			end
-		end
+		-- wipe the per-row callbacks. the rows are keyed by dropdown_border, so
+		-- dropping that handle is what unregisters them; the old code cleared
+		-- click_connections[object] (always nil) and left the rows registered,
+		-- so every open piled another set of callbacks on top of the last
+		click_connections[dropdown_border] = nil
+		hover_connections[dropdown_border] = nil
 
 		local children = dropdown_inside["children"]
-		for _, child in children do
-			local children = child["children"]
-			for i = 1, #children do
-				tween(children[i], hide_transparency, circular, out, 0.15)
-			end
+
+		-- snapshot the list first: clearing children while iterating it skipped
+		-- every other row, so old option drawings stayed parented to the menu
+		local to_destroy = {}
+
+		for i = 1, #children do
+			to_destroy[#to_destroy + 1] = children[i]
+			children[i] = nil
 		end
 
-		local children = dropdown_inside["children"]
-		for _, child in children do
-			children[_] = nil
+		for i = 1, #to_destroy do
+			local child = to_destroy[i]
+
+			tween(child, hide_transparency, circular, out, 0.15)
 
 			delay(0.14, function()
 				child:Destroy()
-				local children = child["children"]
-				for i = 1, #children do
-					children[i]:Destroy()
+
+				local child_children = child["children"]
+				if child_children then
+					for j = #child_children, 1, -1 do
+						child_children[j]:Destroy()
+						child_children[j] = nil
+					end
 				end
 			end)
 		end
@@ -2448,25 +2525,54 @@ do
 		local border = element["drawings"]["dropdown_border"]
 		local position = border["real_position"]
 		local size = border["real_size"]
-		dropdown_border["Position"] = udim2_new(0, position["X"], 0, position["Y"] + 15)
+
+		local options = element["options"] or {}
+
+		-- only render a window of options instead of every single one.
+		-- creating hundreds of drawings at once froze the game on long lists
+		local visible_options = math["min"](#options, 10)
+		local dropdown_height = 8 + visible_options * 12
+
+		-- keep the whole list on screen. without this the list opened past the
+		-- bottom of the display on low elements and the bottom rows were
+		-- impossible to click
+		local screen = camera["ViewportSize"]
+		local x = position["X"]
+		local y = position["Y"] + 18
+		local width = size["X"]
+
+		if x + width > screen["X"] - 4 then
+			x = screen["X"] - width - 4
+		end
+
+		if x < 4 then
+			x = 4
+		end
+
+		if y + dropdown_height > screen["Y"] - 4 then
+			-- flip above the element when there is more room up there
+			local above = position["Y"] - dropdown_height - 3
+
+			if above > 4 then
+				y = above
+			else
+				y = math["max"](4, screen["Y"] - dropdown_height - 4)
+			end
+		end
+
+		dropdown_border["Position"] = udim2_new(0, x, 0, y - 3)
 		dropdown_border["Visible"] = true
 		tween(
 			dropdown_border,
-			{ tween_position = udim2_new(0, position["X"], 0, position["Y"] + 18), Transparency = 1 },
+			{ tween_position = udim2_new(0, x, 0, y), Transparency = 1 },
 			circular,
 			out,
 			0.15
 		)
 		tween(dropdown_inside, show_transparency, circular, out, 0.15)
 
-		local options = element["options"]
-
-		-- only render a window of options instead of every single one.
-		-- creating hundreds of drawings at once froze the game on long lists
-		local visible_options = math.min(#options, 10)
-
-		dropdown_border["Size"] = udim2_new(0, size["X"], 0, (8 + visible_options * 12))
-		dropdown_inside["Size"] = udim2_new(0, size["X"] - 2, 0, (8 + visible_options * 12) - 2)
+		dropdown_border["Size"] = udim2_new(0, width, 0, dropdown_height)
+		dropdown_inside["Size"] = udim2_new(0, width - 2, 0, dropdown_height - 2)
 
 		local multi = element["multi"]
 
@@ -2474,10 +2580,20 @@ do
 		local scroll_index = 1
 		local selected_options = flags[element["dropdown_flag"]]
 
-		if selected_options and selected_options[1] then
+		if type(selected_options) == "table" then
 			for i = 1, #options do
-				if options[i] == selected_options[1] then
-					scroll_index = math.max(1, i - math.floor(visible_options / 2))
+				local option = options[i]
+				local is_selected = false
+
+				for j = 1, #selected_options do
+					if selected_options[j] == option then
+						is_selected = true
+						break
+					end
+				end
+
+				if is_selected then
+					scroll_index = math["max"](1, i - math["floor"](visible_options / 2))
 					break
 				end
 			end
@@ -3517,7 +3633,9 @@ do
 		tween(colorpicker_hue_dragger, show_transparency, circular, out, 0.15)
 		tween(colorpicker_saturation_dragger, show_transparency, circular, out, 0.15)
 
-		local color = flags[element["color_flag"]]
+		-- a missing flag (e.g. an element whose stored value never got applied)
+		-- used to crash here with "attempt to index nil"
+		local color = flags[element["color_flag"]] or color3_fromrgb(255, 0, 0)
 
 		actives["colorpicker_hue"], actives["colorpicker_saturation"], actives["colorpicker_value"] = color:ToHSV()
 
@@ -3526,7 +3644,7 @@ do
 		end
 
 		set_colorpicker_color(color)
-		set_colorpicker_transparency(flags[element["transparency_flag"]])
+		set_colorpicker_transparency(flags[element["transparency_flag"]] or 0)
 
 		actives["colorpicker"] = element
 	end
@@ -3580,6 +3698,18 @@ do
 		local search_text = search_text:lower()
 		local search_index = 0
 
+		-- same row budget update_position uses, so a search on a short menu
+		-- cannot draw rows past the bottom of the section box
+		local max_rows = 13
+		local holder = actives["panel"]["holder"]
+
+		if holder and holder["real_size"] then
+			local holder_height = holder["real_size"]["Y"] / menu_scale
+			if holder_height > 0 then
+				max_rows = math["max"](1, floor((holder_height - 30) / 30))
+			end
+		end
+
 		for i = 1, #elements do
 			local element = elements[i]
 			local drawings = element["drawings"]
@@ -3587,7 +3717,7 @@ do
 			local text = drawings["text"]
 			local text2 = element["text2"]
 			if
-				search_index < 13
+				search_index < max_rows
 				and (text["Text"]:lower():find(search_text) or text2 and text2:lower():find(search_text))
 			then
 				search_index += 1
@@ -3655,17 +3785,20 @@ do
 		local mouse_position_y = mouse_position["Y"]
 
 		if actives["dropdown"] then
-			local border = actives["dropdown"]["drawings"]["dropdown_border"]
-			local border_position = border["real_position"] + vector2_new(0, 18)
+			-- the list draws at dropdown_border's own position now (it gets
+			-- clamped / flipped around the element), so test against that
+			-- rect directly instead of guessing an offset
+			local border_position = dropdown_border["real_position"]
+			local border_size = dropdown_border["real_size"]
 
 			if
 				not (
 					mouse_position_x > border_position["X"]
-					and mouse_position_x < border_position["X"] + border["real_size"]["X"]
+					and mouse_position_x < border_position["X"] + border_size["X"]
 				)
 				or not (
 					mouse_position_y > border_position["Y"]
-					and mouse_position_y < border_position["Y"] + dropdown_border["real_size"]["Y"]
+					and mouse_position_y < border_position["Y"] + border_size["Y"]
 				)
 			then
 				close_dropdown(actives["dropdown"])
@@ -4624,8 +4757,23 @@ do
 		actives["tab"] = tab
 	end
 
+	-- vertical rhythm of the sidebar. a group reserves its header row plus one row
+	-- per tab, plus a little breathing room. the last tab ends at
+	-- offset + group_tab_offset + tabs * tab_vertical_step, so the group height
+	-- has to include that offset too - otherwise the next group's label is drawn
+	-- on top of the final tab
 	local group_header_height = 30
+	local group_tab_offset = 20
 	local tab_vertical_step = 15
+	local group_bottom_padding = 6
+
+	local function sidebar_group_height(num_tabs)
+		if num_tabs <= 0 then
+			return group_header_height
+		end
+
+		return group_tab_offset + num_tabs * tab_vertical_step + group_bottom_padding
+	end
 
 	function menu.update_layout()
 		local current_y_offset = menu["initial_base_offset"]
@@ -4669,7 +4817,7 @@ do
 					group_line["Position"] = udim2_new(0, 15, 0, current_y_offset + 15)
 				end
 
-				local base_tab_y = current_y_offset + 20
+				local base_tab_y = current_y_offset + group_tab_offset
 				for tab_index = 1, num_tabs do
 					local tab = ordered_tabs[tab_index]
 					local tab_text = tab["text"]
@@ -4684,19 +4832,38 @@ do
 					end
 					if tab_text_frame then
 						tab_text_frame["Position"] = new_tab_position
-						if tab_text then
-							tab_text_frame["Size"] = udim2_new(0, 70, 0, tab_text["TextBounds"]["Y"])
-						end
+						-- the click target has to cover the whole row, otherwise the
+						-- pixels between two tabs swallow the click
+						tab_text_frame["Size"] = udim2_new(0, 70, 0, tab_vertical_step)
 					end
 				end
 				current_y_offset = current_y_offset + group["current_height"]
 			end
 		end
 
-		local size = current_y_offset > 405 and udim2_new(0, 575, 0, 450 + (current_y_offset - 405))
-			or udim2_new(0, 575, 0, 450)
-		drag_frame["Size"] = size
-		frame["Size"] = size
+		-- the sidebar draws its search boxes along the bottom edge (the outer one
+		-- sits 57px up), so the last tab has to stop above them. anything that
+		-- does not fit grows the menu instead of drawing over the search boxes
+		local base_height = 450
+		local sidebar_bottom_padding = 62
+		local max_content_y = base_height - sidebar_bottom_padding
+		local new_height = base_height
+
+		if current_y_offset > max_content_y then
+			new_height = base_height + (current_y_offset - max_content_y)
+		end
+
+		if menu["frame_height"] ~= new_height then
+			menu["frame_height"] = new_height
+
+			local size = udim2_new(0, 575, 0, new_height)
+			drag_frame["Size"] = size
+			frame["Size"] = size
+
+			-- right_side / tab frames are sized in scale, so they follow the new
+			-- height on their own. drag_inside covers drag_frame the same way.
+			drag_inside["Size"] = udim2_new(1, -2, 1, -2)
+		end
 	end
 
 	local group = {}
@@ -4732,7 +4899,7 @@ do
 			["tabs"] = new_tabs,
 			["ordered_tabs"] = ordered_tabs,
 			["initial_offset"] = initial_offset,
-			["current_height"] = group_header_height,
+			["current_height"] = sidebar_group_height(0),
 			["is_visible"] = true,
 			["name"] = name,
 			["text"] = drawing_proxy["new"]("Text", {
@@ -4812,7 +4979,9 @@ do
 		local text_frame = drawing_proxy["new"]("Square", {
 			["Parent"] = inside,
 			["Position"] = position,
-			["Size"] = udim2_new(0, 70, 0, text["TextBounds"]["Y"]),
+			-- match the row height used by update_layout so the click target
+			-- covers the whole tab instead of just the glyph height
+			["Size"] = udim2_new(0, 70, 0, tab_vertical_step),
 			["Filled"] = true,
 			["Transparency"] = 0,
 			["Visible"] = is_group_visible,
@@ -4822,7 +4991,7 @@ do
 		self["tabs"][name] = new_tab
 		ordered_tabs[#ordered_tabs + 1] = new_tab
 
-		self["current_height"] = group_header_height + #ordered_tabs * tab_vertical_step
+		self["current_height"] = sidebar_group_height(#ordered_tabs)
 
 		create_click_connection(text_frame, text_frame, function()
 			if actives["tab"] ~= new_tab then
@@ -4895,7 +5064,15 @@ do
 		self["tabs"][name] = nil
 		remove(ordered_tabs, remove_index)
 
-		self["current_height"] = group_header_height + #ordered_tabs * tab_vertical_step
+		self["current_height"] = sidebar_group_height(#ordered_tabs)
+
+		-- removing the active tab left nothing selected: fall back to another one
+		if not actives["tab"] then
+			local fallback = ordered_tabs[1]
+			if fallback then
+				set_active_tab(fallback)
+			end
+		end
 
 		if self["is_visible"] then
 			menu.update_layout()
@@ -5183,6 +5360,15 @@ do
 	-- > ( panel sections )
 
 	function panel_section:add_item(info)
+		-- never allow two rows with the same label: that is what made the list
+		-- look like it kept growing every time it was refreshed
+		local existing = self["elements"]
+		for i = 1, #existing do
+			if existing[i] and existing[i]["name"] == info["text"] then
+				return existing[i]
+			end
+		end
+
 		local new_item = setmetatable({
 			["drawings"] = {},
 			["color"] = color,
@@ -5234,7 +5420,10 @@ do
 		local icons = info["icons"] or {}
 		for i = 1, #icons do
 			local icon = icons[i]
-			local name = "icon_" .. tostring(clock())
+			-- clock() is not unique enough: two icons created in the same frame
+			-- got the same name and the second one overwrote the first drawing
+			panel_section["icon_counter"] = (panel_section["icon_counter"] or 0) + 1
+			local name = "icon_" .. panel_section["icon_counter"]
 
 			new_item["drawings"][name] = drawing_proxy["new"]("Image", {
 				["Parent"] = inside,
@@ -5250,8 +5439,8 @@ do
 			new_item["icons"][i] = { icon, name }
 		end
 
-		self["scroll_index"] = clamp(self["scroll_index"], 1, 1 + clamp(#self["elements"] - 13, 0, 1000))
-
+		-- scroll bounds are clamped by update_position, which knows how many rows
+		-- actually fit (this used to hard-code 13 and clamp against it)
 		local x = 4 + #icons * 15
 		text["Position"] = udim2_new(0, x, 0, 3)
 		local text2_text = info["text2"]
@@ -5317,24 +5506,16 @@ do
 					self["selected"] = new_item
 					self["on_selection_change"]:Fire(text["Text"])
 
-					local elements = self["elements"]
-					local index = nil
-					for i = 1, #elements do
-						if elements[i] == new_item then
-							index = i
-						end
-					end
-
-					local elements = self["elements"]
-					local old_item = elements[1]
-					elements[1] = new_item
-					elements[index or #elements + 1] = old_item
-
+					-- selection is purely visual now. the old code swapped the
+					-- clicked item into slot 1 to "float" it to the top, which
+					-- duplicated the last entry (and dropped the clicked one when
+					-- it already was first), corrupting the list order and the
+					-- scroll positions. favorites already sort themselves in
+					-- update_position, so no reorder is needed here.
 					if selected then
 						tween(selected["drawings"]["border"], { Color = menu["colors"]["border"] }, circular, out, 0.17)
 					end
 
-					self["scroll_index"] = 1
 					self:update_position()
 				else
 					tween(border, { Color = menu["colors"]["border"] }, circular, out, 0.17)
@@ -5357,9 +5538,7 @@ do
 
 			if element and element["drawings"]["text"]["Text"] == text then
 				object = element
-				if not delay then
-					remove(elements, i)
-				end
+				remove(elements, i)
 				break
 			end
 		end
@@ -5394,17 +5573,76 @@ do
 			drawings[_] = nil
 		end
 
+		-- always drop the entry from the list. keeping it around (the old
+		-- `delay` path) left an element whose drawings were already destroyed,
+		-- so the next layout pass read nil text and the list desynced
+		self["total_y_size"] = math["max"](30, self["total_y_size"] - 30)
 		self["scroll_index"] = clamp(self["scroll_index"], 1, 1 + clamp(#self["elements"] - 13, 0, 1000))
 
-		if not delay then
-			self:update_position()
-		end
+		self:update_position()
 
 		if self["selected"] == object then
 			self["selected"] = nil
 			if not skip then
 				self["on_selection_change"]:Fire(nil)
 			end
+		end
+	end
+
+	-- wipes the whole list in one go. rebuilding it item by item used to leave
+	-- orphaned drawings attached to the holder and a stale total_y_size, which
+	-- is why refreshing the list could stack duplicate rows or lose entries
+	function panel_section:clear(skip)
+		local elements = self["elements"]
+		local holder = self["holder"]
+
+		-- snapshot first: nil-ing entries of the live list leaves holes, and
+		-- `#elements` on a table with holes is undefined, so add_item could
+		-- append on top of a stale row
+		local to_destroy = {}
+
+		for i = 1, #elements do
+			if elements[i] then
+				to_destroy[#to_destroy + 1] = elements[i]
+			end
+		end
+
+		self["elements"] = {}
+
+		for i = 1, #to_destroy do
+			local object = to_destroy[i]
+			local drawings = object["drawings"]
+			local frame = drawings["border"]
+
+			local connections = click_connections[holder]
+			if connections then
+				connections[frame] = nil
+			end
+
+			local connections = hover_connections[holder]
+			if connections then
+				connections[frame] = nil
+			end
+
+			local connections = right_click_connections[holder]
+			if connections then
+				connections[frame] = nil
+			end
+
+			for name, drawing in drawings do
+				drawing:Destroy()
+				drawings[name] = nil
+			end
+		end
+
+		self["total_y_size"] = 30
+		self["scroll_index"] = 1
+		self["selected"] = nil
+
+		self:update_position()
+
+		if not skip then
+			self["on_selection_change"]:Fire(nil)
 		end
 	end
 
@@ -5506,7 +5744,8 @@ do
 			drawings[icons[i][2]]["tween_position"] += udim2_new(0, 15, 0, 0)
 		end
 
-		local name = "icon_" .. clock()
+		panel_section["icon_counter"] = (panel_section["icon_counter"] or 0) + 1
+		local name = "icon_" .. panel_section["icon_counter"]
 
 		drawings[name] = drawing_proxy["new"]("Image", {
 			["Parent"] = drawings["inside"],
@@ -5535,12 +5774,10 @@ do
 		local elements = self["elements"]
 		local fake_elements = {}
 
+		-- favorited items are pinned to the top of the list
 		for i = 1, #elements do
 			local element = elements[i]
 			if element["favorited"] then
-				local frame = elements[i]["drawings"]["border"]
-				frame["Visible"] = true
-				frame["Position"] = udim2_new(0, 0, 0, 30 + (i - scroll_index) * 30)
 				fake_elements[#fake_elements + 1] = element
 			end
 		end
@@ -5552,11 +5789,32 @@ do
 			end
 		end
 
+		local row_height = 30
+		local first_row_y = 30
+
+		-- how many rows actually fit inside the section. this used to be a hard
+		-- coded 13, so on a shorter menu the last rows were drawn outside the
+		-- section box on top of whatever was underneath it
+		local holder_height = 0
+		local holder = self["holder"]
+		if holder and holder["real_size"] then
+			holder_height = holder["real_size"]["Y"] / menu_scale
+		end
+
+		local max_rows = 13
+
+		if holder_height > 0 then
+			max_rows = math["max"](1, floor((holder_height - first_row_y) / row_height))
+		end
+
+		scroll_index = clamp(scroll_index, 1, math["max"](1, #fake_elements - max_rows + 1))
+		self["scroll_index"] = scroll_index
+
 		for i = 1, #fake_elements do
 			local frame = fake_elements[i]["drawings"]["border"]
-			if i >= scroll_index and i < scroll_index + 13 then
+			if i >= scroll_index and i < scroll_index + max_rows then
 				frame["Visible"] = true
-				frame["Position"] = udim2_new(0, 0, 0, 30 + (i - scroll_index) * 30)
+				frame["Position"] = udim2_new(0, 0, 0, first_row_y + (i - scroll_index) * row_height)
 			else
 				frame["Visible"] = false
 			end
@@ -6541,23 +6799,56 @@ do
 	end
 
 	function element:set_options(options)
-		self:set_dropdown()
+		-- swap the list first, then re-apply whatever is still valid. the old
+		-- order wiped the selection before the new options existed, so
+		-- refreshing a list always blanked the dropdown even when the selected
+		-- entry was still there
+		options = type(options) == "table" and options or {}
 		self["options"] = options
+
+		local current = flags[self["dropdown_flag"]]
+		local kept = {}
+
+		if type(current) == "table" then
+			for i = 1, #options do
+				local option = options[i]
+				for j = 1, #current do
+					if current[j] == option then
+						kept[#kept + 1] = option
+						break
+					end
+				end
+			end
+		end
+
+		if #kept == 0 and self["requires_one"] and self["dropdown_default"] then
+			kept = self["dropdown_default"]
+		end
+
+		self:set_dropdown(#kept > 0 and kept or nil)
+
+		-- an open dropdown still lists the old options, so close it
+		if actives["dropdown"] == self then
+			close_dropdown(self)
+		end
 	end
 
 	function element:set_toggle(value, just_keybind)
 		local keybind = keybind_data[self]
-		if keybind then
-			if not just_keybind then
-				local is_on_not_held = keybind["method"] == 2
-				keybind["value"] = value
-				keybind["activated"] = is_on_not_held or value
-				spawn(on_keybind_change["Fire"], on_keybind_change, keybind, self, is_on_not_held or value)
 
-				if is_on_not_held then
-					return
-				end
-			end
+		-- the keybind bookkeeping used to return early here for "not held"
+		-- binds, which meant the toggle never actually applied: its flag stayed
+		-- stale and on_toggle_change never fired. loading a config rebuilds the
+		-- keybinds first, so any toggle that came back with a "not held" bind
+		-- silently stayed in its previous state (that is the esp breaking on
+		-- config load). the flag + visuals + signal below always run now
+		if keybind and not just_keybind then
+			local is_on_not_held = keybind["method"] == 2
+
+			keybind["value"] = value
+			keybind["activated"] = is_on_not_held or value
+
+			spawn(on_keybind_change["Fire"], on_keybind_change, keybind, self, is_on_not_held or value)
 		end
 
 		local drawings = self["drawings"]
@@ -6578,11 +6869,22 @@ do
 		local drawings = self["drawings"]
 		local max = self["slider_max"]
 		local min = self["slider_min"]
+
+		value = tonumber(value)
+
+		if value == nil then
+			return
+		end
+
 		value = clamp(value, min, max)
+
+		-- min == max would divide by zero and render a NaN size
+		local range = max - min
+		local percent = range == 0 and 0 or (value - min) / range
 
 		tween(
 			drawings["slider_fill"],
-			{ tween_size = udim2_new((value - min) / (max - min), value == max and -2 or 0, 1, -2) },
+			{ tween_size = udim2_new(percent, value == max and -2 or 0, 1, -2) },
 			exponential,
 			out,
 			0.2
@@ -6640,28 +6942,30 @@ do
 
 		value = type(value) == "table" and value or { value }
 
-		local options = self["options"]
+		local options = self["options"] or {}
+		local option_set = {}
+
+		for i = 1, #options do
+			option_set[options[i]] = true
+		end
+
+		-- build a clean list instead of pruning the caller's table in place.
+		-- the old code called remove() on the table it was iterating, which
+		-- skipped entries and - when the table was the live flags value - threw
+		-- away options that a loaded config needed to keep selected
+		local filtered = {}
 
 		for i = 1, #value do
 			local option = value[i]
-			local found = false
-			for i = 1, #options do
-				if options[i] == option then
-					found = true
-					break
-				end
-			end
-			if not found then
-				for i = 1, #value do
-					if value[i] == option then
-						remove(value, i)
-						break
-					end
-				end
+
+			if option ~= nil and option_set[option] then
+				filtered[#filtered + 1] = option
 			end
 		end
 
-		if value and #value ~= 0 then
+		value = filtered
+
+		if #value ~= 0 then
 			for i = 1, #value do
 				local option = value[i]
 				text = i == 1 and option or text .. ", " .. option
@@ -7027,14 +7331,27 @@ do
 		if not self["border"] then
 			return
 		end
-		for _, element in self["elements"] do
-			element:remove()
+		-- element:remove() deletes itself from self["elements"], so iterating the
+		-- live list skipped half of them and left orphaned drawings behind
+		local elements = self["elements"]
+
+		for i = #elements, 1, -1 do
+			elements[i]:remove()
 		end
+
+		local drawings = {}
+
 		for _, drawing in self do
+			drawings[#drawings + 1] = { _, drawing }
+		end
+
+		for i = 1, #drawings do
+			local name = drawings[i][1]
+			local drawing = drawings[i][2]
 			local type = typeof(drawing)
 			if (type == "Drawing" or type == "Table") and rawget(drawing, "Destroy") then
 				drawing["Destroy"](drawing)
-				self[_] = nil
+				self[name] = nil
 			end
 		end
 	end
@@ -7501,13 +7818,21 @@ do
 					local flag =
 						data["element"][type == 1 and "dropdown_flag" or type == 2 and "slider_flag" or type == 3 and "toggle_flag" or type == 4 and "name"]
 					local original_value = data["original_value"]
+					local key = data["key"]
+
+					-- a keybind whose element has been destroyed (or that never
+					-- got a key) used to be written with a nil name and then
+					-- crashed every load of the config it was saved in
+					if flag == nil or key == nil or key == "" then
+						continue
+					end
 
 					keybinds[#keybinds + 1] = {
 						["flag"] = flag,
 						["og_value"] = original_value,
 						["value"] = data["value"],
 						["method"] = data["method"],
-						["key"] = data["key"]["Name"],
+						["key"] = key["Name"],
 						["type"] = type,
 					}
 
@@ -7540,6 +7865,33 @@ do
 				return
 			end
 
+			-- keeps only the saved options that this element actually offers.
+			-- returns a fresh table so the saved config is never mutated while
+			-- it is still being read further down
+			local function filter_dropdown_value(element, new_value)
+				if type(new_value) ~= "table" then
+					return nil
+				end
+
+				local options = element["options"] or {}
+				local valid = {}
+
+				for i = 1, #options do
+					valid[options[i]] = true
+				end
+
+				local kept = {}
+
+				for i = 1, #new_value do
+					local option = new_value[i]
+					if option ~= nil and valid[option] then
+						kept[#kept + 1] = option
+					end
+				end
+
+				return #kept > 0 and kept or nil
+			end
+
 			local path = file_path .. "/configs/" .. name .. ".cfg"
 
 			if isfile(path) then
@@ -7549,30 +7901,62 @@ do
 					local loaded_addons = new_flags["loaded_addons"]
 
 					if loaded_addons then
-						for _, addon in addon_data do
-							for i = 1, #loaded_addons do
-								if addon == loaded_addons[i] then
-									continue
-								end
-								menu["unload_addon"](loaded_addons[i])
+						-- unload every addon that the config does not list. the old
+						-- nested loop unloaded inside the inner pass, so an addon
+						-- could be unloaded more than once (and addon_data was
+						-- mutated while being iterated)
+						local wanted = {}
+
+						for i = 1, #loaded_addons do
+							wanted[loaded_addons[i]] = true
+						end
+
+						local current = {}
+
+						for addon in addon_data do
+							current[#current + 1] = addon
+						end
+
+						for i = 1, #current do
+							local addon = current[i]
+							if not wanted[addon] then
+								menu["unload_addon"](addon)
 							end
 						end
 
-						for _, addon in loaded_addons do
+						for i = 1, #loaded_addons do
+							local addon = loaded_addons[i]
 							if not addon_data[addon] then
 								menu["load_addon"](addon)
 							end
 						end
 					else
-						for _, addon in addon_data do
-							menu["unload_addon"](addon)
+						local current = {}
+
+						for addon in addon_data do
+							current[#current + 1] = addon
+						end
+
+						for i = 1, #current do
+							menu["unload_addon"](current[i])
 						end
 					end
 
+					-- snapshot first: this loop used to fire deletions while iterating the
+					-- live table, and never actually removed the entries unless the
+					-- config happened to contain a keybinds list
+					local stale_binds = {}
+
 					for element, keybind in keybind_data do
 						if element ~= 1 then
-							on_keybind_deleted:Fire(keybind, element, true)
+							stale_binds[#stale_binds + 1] = { element, keybind }
 						end
+					end
+
+					for i = 1, #stale_binds do
+						local entry = stale_binds[i]
+						on_keybind_deleted:Fire(entry[2], entry[1], true)
+						keybind_data[entry[1]] = nil
 					end
 
 					local colors = menu["colors"]
@@ -7587,12 +7971,9 @@ do
 					local keybinds = new_flags["keybinds"]
 
 					if keybinds then
-						for _, data in keybind_data do
-							if type(_) == "table" then
-								keybind_data[_] = nil
-							end
-						end
-
+						-- keybind_data was already cleared above (every element key
+						-- plus the positional entry is handled there), so rebuild
+						-- straight from the config instead of clearing a second time
 						for _, new_keybind in keybinds do
 							local flag = new_keybind["flag"]
 							local type = new_keybind["type"]
@@ -7707,28 +8088,11 @@ do
 
 									if dropdown_flag then
 										local value = flags[dropdown_flag]
-										local new_value = new_flags[dropdown_flag]
+										local new_value = filter_dropdown_value(element, new_flags[dropdown_flag])
 
 										if value ~= new_value then
-											if new_value then
-												local options = element["options"]
-
-												for _, value in new_value do
-													local found = false
-													for i = 1, #options do
-														if options[i] == value then
-															found = true
-															break
-														end
-													end
-													if not found then
-														remove(new_value, _)
-													end
-												end
-											end
-
 											element:set_dropdown(
-												(new_value and #new_value > 0 and new_value)
+												new_value
 													or (element["requires_one"] and element["dropdown_default"])
 											)
 										end
@@ -7819,28 +8183,11 @@ do
 
 							if dropdown_flag then
 								local value = flags[dropdown_flag]
-								local new_value = new_flags[dropdown_flag]
+								local new_value = filter_dropdown_value(element, new_flags[dropdown_flag])
 
 								if value ~= new_value then
-									if new_value then
-										local options = element["options"]
-
-										for _, value in new_value do
-											local found = false
-											for i = 1, #options do
-												if options[i] == value then
-													found = true
-													break
-												end
-											end
-											if not found then
-												remove(new_value, _)
-											end
-										end
-									end
-
 									element:set_dropdown(
-										(new_value and #new_value > 0 and new_value)
+										new_value
 											or (element["requires_one"] and element["dropdown_default"])
 									)
 								end
@@ -9026,7 +9373,11 @@ do
 		-- >> ( buttons )
 
 		create_click_connection(frame, settings_image, function()
-			if actives["settings"] == theme_section then
+			-- this used to test theme_section while actually toggling
+			-- settings_section. with the theme panel open, clicking the cog closed
+			-- the wrong panel: the theme popup stayed drawn on screen while the
+			-- active-settings slot was cleared, so it could never be closed again
+			if actives["settings"] == settings_section then
 				close_settings(settings_section)
 			else
 				open_settings(settings_section)
@@ -9212,11 +9563,13 @@ do
 			end)
 
 			create_connection(refresh_config_list["on_clicked"], function()
-				local elements = config_list["elements"]
-				for _, element in elements do
-					config_list:remove_item(element["name"], true)
-					elements[_] = nil
-				end
+				-- clear() rebuilds the scroll size and drops the drawings in one
+				-- pass. the old loop removed items one by one while mutating the
+				-- same table it was iterating, which left half the rows behind.
+				-- it is not skipped here because the selection is gone after a
+				-- refresh: the panel has to fall back to "create config", and the
+				-- buttons that need a selected config must be hidden again
+				config_list:clear(false)
 
 				local configs = menu["get_config_list"]()
 				local current_autoload = menu["autoload"]
