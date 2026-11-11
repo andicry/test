@@ -496,8 +496,29 @@ do
 	local cog_image_data = base64_decode(
 		"iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAMAAAC67D+PAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAGUExURf///wAAAFXC034AAAACdFJOU/8A5bcwSgAAAAlwSFlzAAAQKAAAECgBJz8A6wAAABh0RVh0U29mdHdhcmUAUGFpbnQuTkVUIDUuMS4y+7wDtgAAALZlWElmSUkqAAgAAAAFABoBBQABAAAASgAAABsBBQABAAAAUgAAACgBAwABAAAAAgAAADEBAgAQAAAAWgAAAGmHBAABAAAAagAAAAAAAAB3mgEA6AMAAHeaAQDoAwAAUGFpbnQuTkVUIDUuMS4yAAMAAJAHAAQAAAAwMjMwAaADAAEAAAABAAAABaAEAAEAAACUAAAAAAAAAAIAAQACAAQAAABSOTgAAgAHAAQAAAAwMTAwAAAAAEyPNqYn0aVIAAAALElEQVQYV2NgBAIGCAmioQhIQACQCZaGYBAJoZGYSApgUhATYAiikJGRkREACr4AMZ+SUSoAAAAASUVORK5CYII="
 	)
-	local menu_position =
-		udim2_new(0, camera["ViewportSize"]["X"] / 2 - 575 / 2, 0, camera["ViewportSize"]["Y"] / 2 - 450 * 0.5)
+	-- > ( mobile )
+
+	-- same detection linora uses: touch without mouse, or an android / ios platform
+	local is_mobile = (user_input_service["TouchEnabled"] and not user_input_service["MouseEnabled"])
+		or game:GetService("UserInputService"):GetPlatform() == Enum["Platform"]["Android"]
+		or game:GetService("UserInputService"):GetPlatform() == Enum["Platform"]["IOS"]
+
+	-- the whole menu renders scaled down on phones so it fits the screen.
+	-- set getgenv().ui_scale on pc to preview the mobile layout
+	local mobile_viewport = camera["ViewportSize"]
+	local menu_scale = getgenv().ui_scale
+		or (
+			is_mobile
+				and clamp(math.min(mobile_viewport["X"] / 700, mobile_viewport["Y"] / 520), 0.55, 0.85)
+			or 1
+		)
+
+	local menu_position = udim2_new(
+		0,
+		(mobile_viewport["X"] - 575 * menu_scale) / 2 / menu_scale,
+		0,
+		(mobile_viewport["Y"] - 450 * menu_scale) / 2 / menu_scale
+	)
 
 	local half_transparency = { Transparency = 0.5 }
 	local stop_panel_search = nil
@@ -506,6 +527,7 @@ do
 	local theme_section = nil
 	local close_context = nil
 	local menu_open = true
+	local menu_locked = false
 	local menu_tick = clock()
 	local pop_menu = nil
 	local old_text = ""
@@ -545,11 +567,16 @@ do
 					["parent"] = false,
 					["is_rendering"] = false,
 					["skip"] = class == "Circle",
+					["no_scale"] = false,
 					["visible"] = false,
 					["destroy"] = function()
 						object:Destroy()
 					end,
 				}, drawing_proxy)
+
+				-- exclude from the mobile menu scale before any property is applied
+				local no_scale = properties["no_scale"]
+				properties["no_scale"] = nil
 
 				local size = properties["Size"]
 				if size and type(size) == "number" then
@@ -558,6 +585,10 @@ do
 
 				local z_index = properties["ZIndex"]
 				properties["ZIndex"] = z_index and z_index + 20 or 20
+
+				if no_scale then
+					proxy["no_scale"] = true
+				end
 
 				for property, value in properties do
 					proxy[property] = value
@@ -578,14 +609,23 @@ do
 				["parent"] = false,
 				["is_rendering"] = false,
 				["skip"] = class == "Circle",
+				["no_scale"] = false,
 				["visible"] = false,
 				["destroy"] = function()
 					object:Destroy()
 				end,
 			}, drawing_proxy)
 
+			-- exclude from the mobile menu scale before any property is applied
+			local no_scale = properties["no_scale"]
+			properties["no_scale"] = nil
+
 			local z_index = properties["ZIndex"]
 			properties["ZIndex"] = z_index and z_index + 20 or 20
+
+			if no_scale then
+				proxy["no_scale"] = true
+			end
 
 			for property, value in properties do
 				proxy[property] = value
@@ -604,16 +644,17 @@ do
 		local update_proxy_position
 		update_proxy_position = LPH_NO_VIRTUALIZE(function(proxy, position)
 			local parent = rawget(proxy, "parent")
+			local scale = rawget(proxy, "no_scale") and 1 or menu_scale
 			local real_position = parent and parent["real_position"]
-				or vector2_new(position["X"]["Offset"], position["Y"]["Offset"])
+				or vector2_new(position["X"]["Offset"] * scale, position["Y"]["Offset"] * scale)
 
 			if parent then
 				local parent_position = parent["real_position"]
 				local real_parent_size = parent["real_size"]
 
 				real_position = vector2_new(
-					(parent_position["X"] + real_parent_size["X"] * position["X"]["Scale"]) + position["X"]["Offset"],
-					(parent_position["Y"] + real_parent_size["Y"] * position["Y"]["Scale"]) + position["Y"]["Offset"]
+					(parent_position["X"] + real_parent_size["X"] * position["X"]["Scale"]) + position["X"]["Offset"] * scale,
+					(parent_position["Y"] + real_parent_size["Y"] * position["Y"]["Scale"]) + position["Y"]["Offset"] * scale
 				)
 			end
 
@@ -654,14 +695,15 @@ do
 			end
 
 			local parent = rawget(proxy, "parent")
-			local real_size = parent and parent["real_size"] or vector2_new(size["X"]["Offset"], size["Y"]["Offset"])
+			local scale = rawget(proxy, "no_scale") and 1 or menu_scale
+			local real_size = parent and parent["real_size"] or vector2_new(size["X"]["Offset"] * scale, size["Y"]["Offset"] * scale)
 
 			if parent then
 				local parent_size = parent["real_size"]
 
 				real_size = vector2_new(
-					(parent_size["X"] * size["X"]["Scale"]) + size["X"]["Offset"],
-					(parent_size["Y"] * size["Y"]["Scale"]) + size["Y"]["Offset"]
+					(parent_size["X"] * size["X"]["Scale"]) + size["X"]["Offset"] * scale,
+					(parent_size["Y"] * size["Y"]["Scale"]) + size["Y"]["Offset"] * scale
 				)
 			end
 
@@ -698,6 +740,11 @@ do
 			elseif property == "Visible" then
 				self["visible"] = value
 				update_proxy_visibility(self, value)
+			elseif property == "Size" and type(value) == "number" then
+				-- text font size, scaled with the menu
+				self["object"]["Size"] = value * (rawget(self, "no_scale") and 1 or menu_scale)
+			elseif property == "Radius" or property == "Thickness" then
+				self["object"][property] = value * (rawget(self, "no_scale") and 1 or menu_scale)
 			elseif
 				(property == "Size" or property == "tween_size")
 				and type(value) ~= "number"
@@ -711,6 +758,19 @@ do
 		end
 
 		function drawing_proxy:__index(property)
+			if property == "TextBounds" then
+				-- the rendered text is scaled on mobile, so report the bounds back
+				-- in raw (unscaled) units to keep the layout math consistent
+				local bounds = self["object"]["TextBounds"]
+				local scale = rawget(self, "no_scale") and 1 or menu_scale
+
+				if scale == 1 then
+					return bounds
+				end
+
+				return vector2_new(bounds["X"] / scale, bounds["Y"] / scale)
+			end
+
 			return property == "tween_size" and self["size"]
 				or property == "tween_position" and self["position"]
 				or property == "Destroy" and self["destroy"]
@@ -725,6 +785,7 @@ do
 		["Size"] = udim2_new(0, 24, 0, 24),
 		["Color"] = menu["colors"]["cursor"],
 		["Rounding"] = 0,
+		["no_scale"] = true,
 		["Data"] = base64_decode(
 			"iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAMAAABEpIrGAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAACHUExURaWlpdTV1cDBwbq6uv///+Li4q6ursPDw9vc3Nna2sTExLCwsNPT09bW1tXV1bGxsdLT083OzrKyss/Pz7Ozs8jIyLS1tcbHx7W1tcnJybm5ufDw8JKSkpmZmaqrq6ipqaWmpqanp4aGhpqamszMzMLCwuLh4Xx8fL29vfHw8Hl5eY+OjgAAAAqocEsAAAAtdFJOU///////////////////////////////////////////////////////////AKXvC/0AAAAJcEhZcwAADsMAAA7DAcdvqGQAAAAYdEVYdFNvZnR3YXJlAFBhaW50Lk5FVCA1LjEuNBLfpoMAAAC2ZVhJZklJKgAIAAAABQAaAQUAAQAAAEoAAAAbAQUAAQAAAFIAAAAoAQMAAQAAAAIAAAAxAQIAEAAAAFoAAABphwQAAQAAAGoAAAAAAAAAYAAAAAEAAABgAAAAAQAAAFBhaW50Lk5FVCA1LjEuNAADAACQBwAEAAAAMDIzMAGgAwABAAAAAQAAAAWgBAABAAAAlAAAAAAAAAACAAEAAgAEAAAAUjk4AAIABwAEAAAAMDEwMAAAAADX5rshveZftAAAALhJREFUOE/V0scWgjAQhWHUK2JX7L33vP/zmcilJRNd+6+Yme+w4BCoH2kQVKocpDSoAfWQo5sGDQCRVxCg6RMatAxA1ObGKgPoyCIHHlEA6EqiCNDrc1uoBDBwRRlgGHOfZQGMxjyk2QCTKS/MAZjNeUpyARY8JQmgLCSAJY8mCax4+5SD9WYbx+Fufyh/8AwcubBLwYmzkwbmjzr7XmDABbjeOLppcMfjyUlIA/VKHuUM+NofAKXelaSKsWMM5jMAAAAASUVORK5CYII="
 		),
@@ -956,6 +1017,148 @@ do
 		["ZIndex"] = 1002,
 		["Transparency"] = 1,
 	})
+
+	-- > ( mobile buttons )
+
+	-- open / lock pills for phones, drawn in the same style as the rest of the menu
+	-- (same rounded pixel borders, same colors). they are excluded from the menu
+	-- scale so they stay thumb-sized, and they only exist on mobile
+	local mobile_button_width = 78
+	local mobile_button_height = 30
+
+	local mobile_button_x = camera["ViewportSize"]["X"] - mobile_button_width - 14
+	local mobile_button_y = camera["ViewportSize"]["Y"] / 2 - mobile_button_height - 14
+
+	local function create_mobile_button(position_y, label)
+		local button_frame = drawing_proxy["new"]("Image", {
+			["Position"] = udim2_new(0, mobile_button_x, 0, position_y),
+			["Size"] = udim2_new(0, mobile_button_width, 0, mobile_button_height),
+			["Color"] = menu["colors"]["border"],
+			["Rounding"] = 4,
+			["Data"] = pixel_image_data,
+			["Transparency"] = 0,
+			["ZIndex"] = 1200,
+			["Visible"] = false,
+			["no_scale"] = true,
+		})
+
+		local button_inside = drawing_proxy["new"]("Image", {
+			["Parent"] = button_frame,
+			["Position"] = udim2_new(0, 1, 0, 1),
+			["Size"] = udim2_new(1, -2, 1, -2),
+			["Color"] = color3_fromrgb(15, 15, 15),
+			["Rounding"] = 4,
+			["Data"] = pixel_image_data,
+			["Transparency"] = 0,
+			["ZIndex"] = 1201,
+			["Visible"] = true,
+			["no_scale"] = true,
+		})
+
+		local button_text = drawing_proxy["new"]("Text", {
+			["Parent"] = button_frame,
+			["Text"] = label,
+			["Font"] = 1,
+			["Size"] = 13,
+			["Color"] = menu["colors"]["dark_text"],
+			["Center"] = true,
+			["Position"] = udim2_new(0.5, 0, 0.5, 0),
+			["ZIndex"] = 1202,
+			["Visible"] = true,
+			["no_scale"] = true,
+		})
+
+		return button_frame, button_inside, button_text
+	end
+
+	local mobile_open_frame, mobile_open_inside, mobile_open_text =
+		create_mobile_button(mobile_button_y, "open")
+	local mobile_lock_frame, mobile_lock_inside, mobile_lock_text =
+		create_mobile_button(mobile_button_y + mobile_button_height + 8, "lock")
+
+	-- refreshes the lock button look: purple when the menu movement is locked
+	local update_mobile_lock_button = LPH_NO_VIRTUALIZE(function()
+		if not is_mobile then
+			return
+		end
+
+		if menu_locked then
+			mobile_lock_inside["Color"] = menu["colors"]["accent"]
+			mobile_lock_text["Color"] = color3_fromrgb(0, 0, 0)
+			mobile_lock_text["Text"] = "unlock"
+		else
+			mobile_lock_inside["Color"] = color3_fromrgb(15, 15, 15)
+			mobile_lock_text["Color"] = menu["colors"]["dark_text"]
+			mobile_lock_text["Text"] = "lock"
+		end
+	end)
+
+	local flash_mobile_button = LPH_NO_VIRTUALIZE(function(inside, text)
+		inside["Color"] = menu["colors"]["highlighted"]
+		text["Color"] = color3_fromrgb(255, 255, 255)
+
+		delay(0.15, function()
+			if inside == mobile_lock_inside then
+				update_mobile_lock_button()
+			else
+				inside["Color"] = color3_fromrgb(15, 15, 15)
+				text["Color"] = menu["colors"]["dark_text"]
+			end
+		end)
+	end)
+
+	if is_mobile then
+		-- lock button is always there on mobile, open button only shows while the menu is closed
+		mobile_lock_frame["Visible"] = true
+
+		create_connection(
+			user_input_service["InputBegan"],
+			LPH_NO_VIRTUALIZE(function(input, _)
+				local input_type = input["UserInputType"]
+
+				if input_type ~= Enum["UserInputType"]["MouseButton1"] and input_type ~= Enum["UserInputType"]["Touch"] then
+					return
+				end
+
+				local position = get_mouse_location(user_input_service)
+
+				-- open button: only there while the menu is closed
+				if mobile_open_frame["Visible"] then
+					local open_position = mobile_open_frame["real_position"]
+					local open_size = mobile_open_frame["real_size"]
+
+					if
+						position["X"] > open_position["X"]
+						and position["X"] < open_position["X"] + open_size["X"]
+						and position["Y"] > open_position["Y"]
+						and position["Y"] < open_position["Y"] + open_size["Y"]
+					then
+						flash_mobile_button(mobile_open_inside, mobile_open_text)
+
+						if pop_menu and not menu_open then
+							pop_menu()
+						end
+
+						return
+					end
+				end
+
+				local lock_position = mobile_lock_frame["real_position"]
+				local lock_size = mobile_lock_frame["real_size"]
+
+				if
+					position["X"] > lock_position["X"]
+					and position["X"] < lock_position["X"] + lock_size["X"]
+					and position["Y"] > lock_position["Y"]
+					and position["Y"] < lock_position["Y"] + lock_size["Y"]
+				then
+					menu_locked = not menu_locked
+					update_mobile_lock_button()
+					flash_mobile_button(mobile_lock_inside, mobile_lock_text)
+				end
+			end)
+		)
+	end
 
 	-- > ( keybinds )
 
@@ -3484,10 +3687,10 @@ do
 		if
 			connections
 			or (
-					mouse_position_x > menu_position["X"]["Offset"]
-					and mouse_position_x < menu_position["X"]["Offset"] + frame["Size"]["X"]
+					mouse_position_x > frame["real_position"]["X"]
+					and mouse_position_x < frame["real_position"]["X"] + frame["real_size"]["X"]
 				)
-				and (mouse_position_y > menu_position["Y"]["Offset"] and mouse_position_y < menu_position["Y"]["Offset"] + frame["Size"]["Y"])
+				and (mouse_position_y > frame["real_position"]["Y"] and mouse_position_y < frame["real_position"]["Y"] + frame["real_size"]["Y"])
 		then
 			if not connections then
 				for object, connections in click_connections do
@@ -3645,12 +3848,12 @@ do
 
 		if
 			(
-				mouse_position_x > menu_position["X"]["Offset"]
-				and mouse_position_x < menu_position["X"]["Offset"] + frame["Size"]["X"]
+				mouse_position_x > frame["real_position"]["X"]
+				and mouse_position_x < frame["real_position"]["X"] + frame["real_size"]["X"]
 			)
 			and (
-				mouse_position_y > menu_position["Y"]["Offset"]
-				and mouse_position_y < menu_position["Y"]["Offset"] + frame["Size"]["Y"]
+				mouse_position_y > frame["real_position"]["Y"]
+				and mouse_position_y < frame["real_position"]["Y"] + frame["real_size"]["Y"]
 			)
 		then
 			for object, connections in scroll_connections do
@@ -3732,10 +3935,10 @@ do
 		end
 
 		if
-			(mouse_position_x > menu_position["X"]["Offset"] and mouse_position_x < menu_position["X"]["Offset"] + frame["Size"]["X"])
+			(mouse_position_x > frame["real_position"]["X"] and mouse_position_x < frame["real_position"]["X"] + frame["real_size"]["X"])
 			and (
-				mouse_position_y > menu_position["Y"]["Offset"]
-				and mouse_position_y < menu_position["Y"]["Offset"] + frame["Size"]["Y"]
+				mouse_position_y > frame["real_position"]["Y"]
+				and mouse_position_y < frame["real_position"]["Y"] + frame["real_size"]["Y"]
 			)
 		then
 			return Enum["ContextActionResult"]["Sink"]
@@ -3763,10 +3966,10 @@ do
 		if
 			connections
 			or (
-					mouse_position_x > menu_position["X"]["Offset"]
-					and mouse_position_x < menu_position["X"]["Offset"] + frame["Size"]["X"]
+					mouse_position_x > frame["real_position"]["X"]
+					and mouse_position_x < frame["real_position"]["X"] + frame["real_size"]["X"]
 				)
-				and (mouse_position_y > menu_position["Y"]["Offset"] and mouse_position_y < menu_position["Y"]["Offset"] + frame["Size"]["Y"])
+				and (mouse_position_y > frame["real_position"]["Y"] and mouse_position_y < frame["real_position"]["Y"] + frame["real_size"]["Y"])
 		then
 			if not connections then
 				for object, connections in hover_connections do
@@ -3933,12 +4136,12 @@ do
 
 		if
 			(
-				mouse_position_x > menu_position["X"]["Offset"]
-				and mouse_position_x < menu_position["X"]["Offset"] + frame["Size"]["X"] * 1.5
+				mouse_position_x > frame["real_position"]["X"]
+				and mouse_position_x < frame["real_position"]["X"] + frame["real_size"]["X"] * 1.5
 			)
 			and (
-				mouse_position_y > menu_position["Y"]["Offset"]
-				and mouse_position_y < menu_position["Y"]["Offset"] + frame["Size"]["Y"] * 1.5
+				mouse_position_y > frame["real_position"]["Y"]
+				and mouse_position_y < frame["real_position"]["Y"] + frame["real_size"]["Y"] * 1.5
 			)
 		then
 			for object, connections in right_click_connections do
@@ -4071,6 +4274,11 @@ do
 
 		frame["Visible"] = not a
 		inside["Visible"] = not a
+
+		-- the mobile open button is only shown while the menu is closed
+		if is_mobile then
+			mobile_open_frame["Visible"] = not menu_open
+		end
 
 		set_properties(frame, transparency)
 		set_properties(inside, transparency)
@@ -5533,34 +5741,58 @@ do
 				})
 				local dual_fill = drawing_proxy["new"]("Image", {
 					["Parent"] = dual_inside,
-					["Position"] = udim2_new(0, 0, 0, 0),
-					["Size"] = udim2_new(0, 0, 1, 0),
+					["Position"] = udim2_new(0, 1, 0, 1),
+					["Size"] = udim2_new(0, 0, 1, -2),
 					["Color"] = menu["colors"]["accent"],
-					["Rounding"] = 2,
+					["Rounding"] = 4,
 					["Data"] = pixel_image_data,
 					["Transparency"] = 0.5,
 					["ZIndex"] = zindex + 3,
 					["Visible"] = true,
 				})
-				local dual_handle_min = drawing_proxy["new"]("Square", {
+
+				-- round drag handles: dark outline + white inner, same look as the colorpicker dragger
+				local dual_handle_radius = 4
+
+				local dual_handle_min = drawing_proxy["new"]("Circle", {
 					["Parent"] = dual_inside,
-					["Position"] = udim2_new(0, 0, 0, 0),
-					["Size"] = udim2_new(0, 1, 1, 0),
-					["Color"] = menu["colors"]["accent"],
+					["Position"] = udim2_new(0, 0, 0.5, 0),
+					["Radius"] = dual_handle_radius + 1,
+					["Color"] = menu["colors"]["background"],
+					["Thickness"] = 1,
+					["Transparency"] = 0,
 					["Visible"] = true,
-					["Filled"] = true,
-					["Transparency"] = 1,
 					["ZIndex"] = zindex + 4,
 				})
-				local dual_handle_max = drawing_proxy["new"]("Square", {
-					["Parent"] = dual_inside,
-					["Position"] = udim2_new(1, 0, 0, 0),
-					["Size"] = udim2_new(0, 1, 1, 0),
-					["Color"] = menu["colors"]["accent"],
-					["Visible"] = true,
+				local dual_handle_min_inner = drawing_proxy["new"]("Circle", {
+					["Parent"] = dual_handle_min,
+					["Position"] = udim2_new(0, 0, 0, 0),
+					["Radius"] = dual_handle_radius,
+					["Color"] = color3_fromrgb(255, 255, 255),
 					["Filled"] = true,
-					["Transparency"] = 1,
+					["Transparency"] = 0,
+					["Visible"] = true,
+					["ZIndex"] = zindex + 5,
+				})
+				local dual_handle_max = drawing_proxy["new"]("Circle", {
+					["Parent"] = dual_inside,
+					["Position"] = udim2_new(1, 0, 0.5, 0),
+					["Radius"] = dual_handle_radius + 1,
+					["Color"] = menu["colors"]["background"],
+					["Thickness"] = 1,
+					["Transparency"] = 0,
+					["Visible"] = true,
 					["ZIndex"] = zindex + 4,
+				})
+				local dual_handle_max_inner = drawing_proxy["new"]("Circle", {
+					["Parent"] = dual_handle_max,
+					["Position"] = udim2_new(0, 0, 0, 0),
+					["Radius"] = dual_handle_radius,
+					["Color"] = color3_fromrgb(255, 255, 255),
+					["Filled"] = true,
+					["Transparency"] = 0,
+					["Visible"] = true,
+					["ZIndex"] = zindex + 5,
 				})
 				local dual_text = drawing_proxy["new"]("Text", {
 					["Color"] = menu["colors"]["dark_text"],
@@ -5619,10 +5851,10 @@ do
 					local spread = dual_max_value - dual_min_value
 					local start = spread <= 0 and 0 or (dual_current_min - dual_min_value) / spread
 					local stop = spread <= 0 and 0 or (dual_current_max - dual_min_value) / spread
-					dual_fill["Position"] = udim2_new(start, 0, 0, 0)
-					dual_fill["Size"] = udim2_new(math.max(0, stop - start), 0, 1, 0)
-					dual_handle_min["Position"] = udim2_new(start, 0, 0, 0)
-					dual_handle_max["Position"] = udim2_new(stop, 0, 0, 0)
+					dual_fill["Position"] = udim2_new(start, 1, 0, 1)
+					dual_fill["Size"] = udim2_new(math.max(0, stop - start), -2, 1, -2)
+					dual_handle_min["Position"] = udim2_new(start, 0, 0.5, 0)
+					dual_handle_max["Position"] = udim2_new(stop, 0, 0.5, 0)
 					dual_text["Text"] = dual_number_text(dual_current_min)
 						.. dual_suffix
 						.. " - "
@@ -5664,14 +5896,26 @@ do
 				end)
 
 				create_click_connection(parent, dual_border, function(mouse_position)
-					local center_x = dual_inside["real_position"]["X"] + dual_inside["real_size"]["X"] * 0.5
-					if (mouse_position["X"] or 0) < center_x then
-						dual_update_values(dual_mouse_value(mouse_position["X"]), dual_current_max, "min")
+					-- drag whichever round handle the cursor is closest to
+					local inside_position = dual_inside["real_position"]
+					local inside_width = dual_inside["real_size"]["X"]
+					local spread = dual_max_value - dual_min_value
+					local mouse_x = mouse_position["X"] or 0
+
+					local min_percent = spread <= 0 and 0 or (dual_current_min - dual_min_value) / spread
+					local max_percent = spread <= 0 and 0 or (dual_current_max - dual_min_value) / spread
+
+					local min_x = inside_position["X"] + inside_width * min_percent
+					local max_x = inside_position["X"] + inside_width * max_percent
+					local dragging_min = math.abs(mouse_x - min_x) <= math.abs(mouse_x - max_x)
+
+					if dragging_min then
+						dual_update_values(dual_mouse_value(mouse_x), dual_current_max, "min")
 						moving = create_move_connection(function()
 							dual_update_values(dual_mouse_value(get_mouse_location(user_input_service)["X"]), dual_current_max, "min")
 						end)
 					else
-						dual_update_values(dual_current_min, dual_mouse_value(mouse_position["X"]), "max")
+						dual_update_values(dual_current_min, dual_mouse_value(mouse_x), "max")
 						moving = create_move_connection(function()
 							dual_update_values(dual_current_min, dual_mouse_value(get_mouse_location(user_input_service)["X"]), "max")
 						end)
@@ -6656,7 +6900,9 @@ do
 			end
 		end
 
-		local inside_height = self["inside"]["real_size"]["Y"]
+		-- element offsets are raw units while real_size is in scaled screen pixels,
+		-- so convert the height back to raw units for the scroll math
+		local inside_height = self["inside"]["real_size"]["Y"] / menu_scale
 		local scroll_index = self["scroll_index"] or 1
 
 		if total_content > inside_height then
