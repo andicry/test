@@ -2438,6 +2438,7 @@ do
 		end
 
 		hover_connections[dropdown_border] = nil
+		scroll_connections[dropdown_border] = nil
 		actives["dropdown"] = nil
 	end
 
@@ -2459,25 +2460,32 @@ do
 		tween(dropdown_inside, show_transparency, circular, out, 0.15)
 
 		local options = element["options"]
-		dropdown_border["Size"] = udim2_new(0, size["X"], 0, (8 + #options * 12))
-		dropdown_inside["Size"] = udim2_new(0, size["X"] - 2, 0, (8 + #options * 12) - 2)
 
-		local selected_options = flags[element["dropdown_flag"]]
+		-- only render a window of options instead of every single one.
+		-- creating hundreds of drawings at once froze the game on long lists
+		local visible_options = math.min(#options, 10)
+
+		dropdown_border["Size"] = udim2_new(0, size["X"], 0, (8 + visible_options * 12))
+		dropdown_inside["Size"] = udim2_new(0, size["X"] - 2, 0, (8 + visible_options * 12) - 2)
 
 		local multi = element["multi"]
 
-		for i = 1, #options do
-			local option = options[i]
-			local selected = nil
-			if selected_options then
-				for i = 1, #selected_options do
-					if selected_options[i] == option then
-						selected = true
-						break
-					end
+		-- start scrolled so the selected option is visible right away
+		local scroll_index = 1
+		local selected_options = flags[element["dropdown_flag"]]
+
+		if selected_options and selected_options[1] then
+			for i = 1, #options do
+				if options[i] == selected_options[1] then
+					scroll_index = math.max(1, i - math.floor(visible_options / 2))
+					break
 				end
 			end
+		end
 
+		local rows = {}
+
+		for i = 1, visible_options do
 			local option_click = drawing_proxy["new"]("Square", {
 				["Parent"] = dropdown_inside,
 				["Size"] = udim2_new(1, -6, 0, 12),
@@ -2498,7 +2506,7 @@ do
 			})
 			local option_text = drawing_proxy["new"]("Text", {
 				["Color"] = menu["colors"]["inactive_text"],
-				["Text"] = option,
+				["Text"] = "",
 				["Size"] = 12,
 				["Font"] = 1,
 				["Transparency"] = 0,
@@ -2507,29 +2515,42 @@ do
 				["ZIndex"] = 1005,
 				["Position"] = udim2_new(0, 0, 0, 0),
 			})
+			local row = {
+				["click"] = option_click,
+				["checkmark"] = option_checkmark,
+				["text"] = option_text,
+				["option"] = nil,
+				["selected"] = false,
+			}
 
-			tween(option_text, show_transparency, circular, out, 0.15)
+			rows[i] = row
 
 			create_hover_connection(dropdown_border, option_click, function()
-				if not selected then
+				if not row["selected"] then
 					tween(option_text, { ["Color"] = menu["colors"]["highlighted"] }, circular, out, 0.17)
 				end
 			end, function()
-				if not selected then
+				if not row["selected"] then
 					tween(option_text, { Color = menu["colors"]["inactive_text"] }, circular, out, 0.17)
 				end
 			end)
 
 			create_click_connection(dropdown_border, option_click, function()
+				local option = row["option"]
+
+				if option == nil then
+					return
+				end
+
 				local result = element:update_dropdown_value(option)
 				if result then
-					selected = true
+					row["selected"] = true
 					tween(option_checkmark, show_transparency, circular, out, 0.15)
 					if not multi then
 						close_dropdown(actives["dropdown"])
 					end
 				elseif result == false then
-					selected = false
+					row["selected"] = false
 					tween(option_checkmark, hide_transparency, circular, out, 0.15)
 					if not multi then
 						close_dropdown(actives["dropdown"])
@@ -2537,11 +2558,58 @@ do
 				end
 			end)
 
-			if selected then
-				option_text["Color"] = menu["colors"]["highlighted"]
-				tween(option_checkmark, show_transparency, circular, out, 0.15)
-			end
+			tween(option_text, show_transparency, circular, out, 0.15)
 		end
+
+		local max_scroll = math.max(1, #options - visible_options + 1)
+
+		local update_rows
+		update_rows = LPH_JIT_MAX(function()
+			scroll_index = clamp(scroll_index, 1, max_scroll)
+
+			for i = 1, visible_options do
+				local index = scroll_index + i - 1
+				local row = rows[i]
+
+				if index > #options then
+					row["option"] = nil
+					row["click"]["Visible"] = false
+				else
+					local option = options[index]
+					local selected = nil
+					local current_selected = flags[element["dropdown_flag"]]
+
+					if current_selected then
+						for j = 1, #current_selected do
+							if current_selected[j] == option then
+								selected = true
+								break
+							end
+						end
+					end
+
+					row["option"] = option
+					row["selected"] = selected and true or false
+					row["click"]["Visible"] = true
+					row["click"]["Position"] = udim2_new(0, 3, 0, 3 + (i - 1) * 12)
+					row["text"]["Text"] = option
+					row["text"]["Color"] = selected and menu["colors"]["highlighted"] or menu["colors"]["inactive_text"]
+					row["checkmark"]["Transparency"] = selected and 0 or 1
+				end
+			end
+		end)
+
+		-- scroll wheel moves through the options when they dont all fit
+		create_scroll_connection(dropdown_border, dropdown_inside, function(is_up)
+			local old_scroll_index = scroll_index
+			scroll_index += is_up and -3 or 3
+
+			if scroll_index ~= old_scroll_index then
+				update_rows()
+			end
+		end)
+
+		update_rows()
 	end
 
 	local context_border = drawing_proxy["new"]("Image", {
@@ -3845,6 +3913,35 @@ do
 		local mouse_position_y = mouse_position["Y"]
 
 		local is_up = input["Position"]["Z"] > 0
+
+		-- an open dropdown scrolls its own options first and blocks the
+		-- section underneath it from scrolling at the same time
+		if actives["dropdown"] then
+			local border_position = dropdown_border["real_position"]
+			local border_size = dropdown_border["real_size"]
+
+			if
+				(mouse_position_x > border_position["X"] and mouse_position_x < border_position["X"] + border_size["X"])
+				and (
+					mouse_position_y > border_position["Y"]
+					and mouse_position_y < border_position["Y"] + border_size["Y"]
+				)
+			then
+				local dropdown_handle = scroll_connections[dropdown_border]
+
+				if dropdown_handle then
+					local data = dropdown_handle[dropdown_inside]
+
+					if data then
+						for i = 1, #data do
+							data[i](is_up)
+						end
+					end
+				end
+
+				return
+			end
+		end
 
 		if
 			(
@@ -5751,48 +5848,29 @@ do
 					["Visible"] = true,
 				})
 
-				-- round drag handles: dark outline + white inner, same look as the colorpicker dragger
-				local dual_handle_radius = 4
+				-- knobs use the accent color so the dual slider reads exactly like
+				-- the regular slider: one thin fill with rounded end caps
+				local dual_handle_radius = 5
 
 				local dual_handle_min = drawing_proxy["new"]("Circle", {
 					["Parent"] = dual_inside,
 					["Position"] = udim2_new(0, 0, 0.5, 0),
-					["Radius"] = dual_handle_radius + 1,
-					["Color"] = menu["colors"]["background"],
-					["Thickness"] = 1,
-					["Transparency"] = 0,
-					["Visible"] = true,
-					["ZIndex"] = zindex + 4,
-				})
-				local dual_handle_min_inner = drawing_proxy["new"]("Circle", {
-					["Parent"] = dual_handle_min,
-					["Position"] = udim2_new(0, 0, 0, 0),
 					["Radius"] = dual_handle_radius,
-					["Color"] = color3_fromrgb(255, 255, 255),
+					["Color"] = menu["colors"]["accent"],
 					["Filled"] = true,
 					["Transparency"] = 0,
 					["Visible"] = true,
-					["ZIndex"] = zindex + 5,
+					["ZIndex"] = zindex + 4,
 				})
 				local dual_handle_max = drawing_proxy["new"]("Circle", {
 					["Parent"] = dual_inside,
 					["Position"] = udim2_new(1, 0, 0.5, 0),
-					["Radius"] = dual_handle_radius + 1,
-					["Color"] = menu["colors"]["background"],
-					["Thickness"] = 1,
-					["Transparency"] = 0,
-					["Visible"] = true,
-					["ZIndex"] = zindex + 4,
-				})
-				local dual_handle_max_inner = drawing_proxy["new"]("Circle", {
-					["Parent"] = dual_handle_max,
-					["Position"] = udim2_new(0, 0, 0, 0),
 					["Radius"] = dual_handle_radius,
-					["Color"] = color3_fromrgb(255, 255, 255),
+					["Color"] = menu["colors"]["accent"],
 					["Filled"] = true,
 					["Transparency"] = 0,
 					["Visible"] = true,
-					["ZIndex"] = zindex + 5,
+					["ZIndex"] = zindex + 4,
 				})
 				local dual_text = drawing_proxy["new"]("Text", {
 					["Color"] = menu["colors"]["dark_text"],
@@ -7180,26 +7258,34 @@ do
 							local slider_fill = drawings["slider_fill"]
 							local slider_text = drawings["slider_text"]
 
-							local icons = element["icons"]
+								local icons = element["icons"]
 
-							if icons then
-								for i = 1, #icons do
-									local icon = icons[i]
-									drawings[icon[2]]["Color"] = color
+								if icons then
+									for i = 1, #icons do
+										local icon = icons[i]
+										drawings[icon[2]]["Color"] = color
+									end
 								end
-							end
 
-							if slider_fill then
-								slider_fill["Color"] = color
+								if slider_fill then
+									slider_fill["Color"] = color
 
-								if flags[element["slider_flag"]] > element["slider_min"] then
-									drawings["slider_line"]["Color"] = color
+									if flags[element["slider_flag"]] > element["slider_min"] then
+										drawings["slider_line"]["Color"] = color
+									end
 								end
-							end
 
-							if checkmark then
-								checkmark["Color"] = color
-							end
+								if checkmark then
+									checkmark["Color"] = color
+								end
+
+								local dual_fill = drawings["dual_fill"]
+
+								if dual_fill then
+									dual_fill["Color"] = color
+									drawings["dual_handle_min"]["Color"] = color
+									drawings["dual_handle_max"]["Color"] = color
+								end
 						end
 					end
 				end
