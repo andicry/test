@@ -535,6 +535,27 @@ do
 	local searching = nil
 	local hud_frames = {}
 
+	-- single place that persists data.dat. there used to be five hand-written
+	-- copies, two of which forgot hide_on_load / autoload, so toggling a
+	-- favorite silently reset the autoload config on the next launch
+	menu["save_data"] = function()
+		local data = {
+			["notifications"] = do_notifications,
+			["favorites"] = menu["favorites"],
+			["theme"] = menu["theme"],
+			["hide_on_load"] = menu["hide_on_load"],
+			["autoload"] = menu["autoload"],
+		}
+
+		local s, err = pcall(function()
+			writefile(file_path .. "/data.dat", http_service:JSONEncode(data))
+		end)
+
+		if not s then
+			warn("failed to save data.dat: " .. tostring(err))
+		end
+	end
+
 	local actives = {
 		["colorpicker"] = nil,
 		["dropdown"] = nil,
@@ -831,6 +852,48 @@ do
 	end
 
 	-- > ( menu creation )
+
+	-- invisible full-screen gui that eats clicks while the menu is open.
+	-- ContextActionService only covers clicks that Roblox routes into the
+	-- action stack; a real GuiObject also blocks clicks on game guis (inventory,
+	-- shops, hotbars) that sit underneath the menu, which the CAS sink cannot
+	-- reach reliably. it is disabled again the moment the menu closes.
+	-- kept on `menu` rather than in top-level locals because the main chunk is
+	-- already at Luau's 200 register limit
+	do
+		local shield = create_instance("Frame", {
+			["Name"] = "\0",
+			["BackgroundTransparency"] = 1,
+			["BorderSizePixel"] = 0,
+			["Size"] = UDim2.new(1, 0, 1, 0),
+			["Position"] = UDim2.new(0, 0, 0, 0),
+			["Visible"] = false,
+			["Active"] = true,
+			["ZIndex"] = 1000,
+		})
+
+		shield["Parent"] = create_instance("ScreenGui", {
+			["Name"] = "\0",
+			["ResetOnSpawn"] = false,
+			-- not IgnoreGuiInset: the roblox topbar stays usable, only the
+			-- world / game guis underneath the menu get shielded
+			["IgnoreGuiInset"] = false,
+			["ZIndexBehavior"] = Enum["ZIndexBehavior"]["Global"],
+			["DisplayOrder"] = 999999,
+			["Parent"] = hui,
+		})
+
+		menu["input_shield"] = shield
+
+		-- height of the roblox topbar. input that lands in the topbar has to
+		-- pass through, otherwise the menu button / leave button / chat become
+		-- unreachable while the ui is open
+		local ok, inset_top_left = pcall(function()
+			return cloneref(game:GetService("GuiService")):GetGuiInset()
+		end)
+
+		menu["top_inset"] = ok and inset_top_left and inset_top_left["Y"] or 0
+	end
 
 	local cursor = drawing_proxy["new"]("Image", {
 		["Position"] = menu_position,
@@ -2027,18 +2090,34 @@ do
 
 		if menu["saved"] then
 			menu["saved"] = false
-			writefile(
-				file_path .. "/data.dat",
-				http_service:JSONEncode({
-					["notifications"] = do_notifications,
-					["favorites"] = menu["favorites"],
-					["theme"] = menu["theme"],
-					["hide_on_load"] = menu["hide_on_load"],
-					["autoload"] = menu["autoload"],
-				})
-			)
+			menu["save_data"]()
 		end
 	end
+
+	-- keyboard counterpart to sink_input. only bound while a textbox is being
+	-- typed into, so game movement stays alive with the menu merely open.
+	-- stored on `menu` because the main chunk is at Luau's 200 register limit
+	menu["sink_typing"] = LPH_JIT_MAX(function(_, state, input)
+		if not active_typing then
+			return Enum["ContextActionResult"]["Pass"]
+		end
+
+		if state ~= Enum["UserInputState"]["Begin"] then
+			return Enum["ContextActionResult"]["Pass"]
+		end
+
+		if input["UserInputType"] ~= Enum["UserInputType"]["KeyDown"] then
+			return Enum["ContextActionResult"]["Pass"]
+		end
+
+		-- never eat escape: it is the escape hatch out of any state, and the
+		-- roblox menu / leaving a game must keep working
+		if input["KeyCode"] == Enum["KeyCode"]["Escape"] then
+			return Enum["ContextActionResult"]["Pass"]
+		end
+
+		return Enum["ContextActionResult"]["Sink"]
+	end)
 
 	local stop_typing = function()
 		for i = 1, #heartbeat do
@@ -2058,6 +2137,9 @@ do
 			typing_connection:Disconnect()
 			typing_connection = nil
 		end
+
+		-- release the keyboard sink so game controls work again
+		pcall(context_action_service.UnbindAction, context_action_service, context_action_typing)
 	end
 
 	local stop_search = function()
@@ -2113,6 +2195,19 @@ do
 		local backspace = Enum["KeyCode"]["Backspace"]
 			local enter = Enum["KeyCode"]["Return"]
 			local shift = Enum["KeyCode"]["LeftShift"]
+
+			-- block the game from receiving the keys we are capturing. without
+			-- this, typing into a textbox also triggered game keybinds (jump,
+			-- tool use, hotbar) because the game listens to the same keys.
+			-- only active while a textbox is being typed into, so WASD / game
+			-- controls keep working with the menu merely open
+			context_action_service:BindActionAtPriority(
+				context_action_typing,
+				menu["sink_typing"],
+				false,
+				high_priority,
+				Enum["UserInputType"]["KeyDown"]
+			)
 
 			typing_connection = create_connection(user_input_service["InputBegan"], function(input, _)
 				do -- works even when the roblox menu is open or a game gui has input focus
@@ -3038,15 +3133,7 @@ do
 					active["favorited"] = true
 					active["parent"]:add_icon(active["drawings"]["text"]["Text"], star)
 
-					writefile(
-						file_path .. "/data.dat",
-						http_service:JSONEncode({
-							["notifications"] = do_notifications,
-							["favorites"] = menu["favorites"],
-							["theme"] = menu["theme"],
-							["autoload"] = menu["autoload"],
-						})
-					)
+					menu["save_data"]()
 				end
 
 				close_context()
@@ -3068,15 +3155,7 @@ do
 					active["parent"]:remove_icon(active["drawings"]["text"]["Text"], star)
 					menu["saved"] = true
 
-					writefile(
-						file_path .. "/data.dat",
-						http_service:JSONEncode({
-							["notifications"] = do_notifications,
-							["favorites"] = menu["favorites"],
-							["theme"] = menu["theme"],
-							["autoload"] = menu["autoload"],
-						})
-					)
+					menu["save_data"]()
 				end
 
 				close_context()
@@ -3176,15 +3255,11 @@ do
 
 					active["parent"]:add_icon(active["drawings"]["text"]["Text"], autoload)
 
-					writefile(
-						file_path .. "/data.dat",
-						http_service:JSONEncode({
-							["notifications"] = do_notifications,
-							["favorites"] = menu["favorites"],
-							["theme"] = menu["theme"],
-							["autoload"] = menu["autoload"],
-						})
-					)
+					menu["save_data"]()
+				end
+
+				if menu["sync_autoload_toggle"] then
+					menu["sync_autoload_toggle"](menu["autoload"] == name and name or nil)
 				end
 
 				close_context()
@@ -3197,7 +3272,6 @@ do
 			),
 			function()
 				local active = actives["context"]
-				local active = actives["context"]
 				local name = active["name"]
 
 				if menu["autoload"] == name then
@@ -3205,15 +3279,11 @@ do
 					menu["saved"] = true
 					active["parent"]:remove_icon(active["drawings"]["text"]["Text"], autoload)
 
-					writefile(
-						file_path .. "/data.dat",
-						http_service:JSONEncode({
-							["notifications"] = do_notifications,
-							["favorites"] = menu["favorites"],
-							["theme"] = menu["theme"],
-							["autoload"] = menu["autoload"],
-						})
-					)
+					menu["save_data"]()
+				end
+
+				if menu["sync_autoload_toggle"] then
+					menu["sync_autoload_toggle"](nil)
 				end
 
 				close_context()
@@ -4134,10 +4204,17 @@ do
 		end
 	end)
 
-	-- sinks game input (clicks / scroll) while the mouse is over our menu, without ever blocking
-	-- our own click handling - that part runs through user_input_service instead so it keeps
-	-- working when the roblox menu is open or a game gui (inventory etc) is stacked on top
+	-- while the menu is open the game gets no mouse / touch / scroll input at all.
+	-- it used to only sink clicks that landed on the menu rect, so clicking the
+	-- empty screen around the menu still moved the camera, used tools and
+	-- clicked world UI - which is exactly the "i keep clicking the game" problem.
+	-- our own handling never goes through ContextActionService (it comes from
+	-- user_input_service), so sinking here cannot break the ui itself
 	local sink_input = LPH_JIT_MAX(function(_, state, _)
+		if not menu_open then
+			return Enum["ContextActionResult"]["Pass"]
+		end
+
 		if
 			state ~= Enum["UserInputState"]["Begin"]
 			and state ~= Enum["UserInputState"]["Change"]
@@ -4145,36 +4222,18 @@ do
 			return Enum["ContextActionResult"]["Pass"]
 		end
 
-		if not menu_open then
-			return Enum["ContextActionResult"]["Pass"]
+		-- the roblox topbar stays usable: menu button, leave button, chat
+		local top_inset = menu["top_inset"]
+
+		if top_inset and top_inset > 0 then
+			local mouse_position = get_mouse_location(user_input_service)
+
+			if mouse_position["Y"] <= top_inset then
+				return Enum["ContextActionResult"]["Pass"]
+			end
 		end
 
-		local mouse_position = get_mouse_location(user_input_service)
-		local mouse_position_x = mouse_position["X"]
-		local mouse_position_y = mouse_position["Y"]
-
-		if
-			searching
-			or actives["colorpicker"]
-			or actives["dropdown"]
-			or actives["keybind"]
-			or actives["context"]
-			or actives["settings"]
-		then
-			return Enum["ContextActionResult"]["Sink"]
-		end
-
-		if
-			(mouse_position_x > frame["real_position"]["X"] and mouse_position_x < frame["real_position"]["X"] + frame["real_size"]["X"])
-			and (
-				mouse_position_y > frame["real_position"]["Y"]
-				and mouse_position_y < frame["real_position"]["Y"] + frame["real_size"]["Y"]
-			)
-		then
-			return Enum["ContextActionResult"]["Sink"]
-		end
-
-		return Enum["ContextActionResult"]["Pass"]
+		return Enum["ContextActionResult"]["Sink"]
 	end)
 
 	local handle_hover = LPH_JIT_MAX(function()
@@ -4510,6 +4569,13 @@ do
 			mobile_open_frame["Visible"] = not menu_open
 		end
 
+		-- block everything behind the menu from receiving mouse / touch input
+		local shield = menu["input_shield"]
+
+		if shield then
+			shield["Visible"] = menu_open and not a
+		end
+
 		set_properties(frame, transparency)
 		set_properties(inside, transparency)
 		set_properties(logo, transparency)
@@ -4575,6 +4641,7 @@ do
 			false,
 			high_priority,
 			Enum["UserInputType"]["MouseButton1"],
+			Enum["UserInputType"]["MouseButton2"],
 			Enum["UserInputType"]["Touch"]
 		)
 		context_action_service:BindActionAtPriority(
@@ -9485,6 +9552,75 @@ do
 				},
 			})
 
+			-- autoload toggle. this used to only exist in the right-click
+			-- context menu, which made it easy to miss and impossible to see
+			-- which config was actually set to load on inject
+			local autoload_config = config_editor:create_element({
+				["name"] = "autoload on inject",
+			}, {
+				["toggle"] = {
+					["flag"] = "!autoload_toggle",
+					["default"] = false,
+				},
+			})
+
+			-- the flag above is internal ("!" means it is not written into
+			-- configs), so keep the toggle in sync whenever the selection or the
+			-- stored autoload value changes. set_toggle always fires
+			-- on_toggle_change, so a guard is needed or this would recurse forever
+			local syncing_autoload = false
+
+			local sync_autoload_toggle = function(selected)
+				syncing_autoload = true
+				flags["!autoload_toggle"] = selected ~= nil and menu["autoload"] == selected
+				autoload_config:set_toggle(flags["!autoload_toggle"], true)
+				syncing_autoload = false
+			end
+
+			-- the right-click context menu also sets/clears the autoload, so
+			-- expose the sync so it can refresh this toggle too
+			menu["sync_autoload_toggle"] = sync_autoload_toggle
+
+			create_connection(autoload_config["on_toggle_change"], function(value)
+				if syncing_autoload then
+					return
+				end
+
+				local selected = config_list["selected"]
+
+				if not selected then
+					return
+				end
+
+				local name = selected["name"]
+
+				if value then
+					menu["autoload"] = name
+				elseif menu["autoload"] == name then
+					menu["autoload"] = nil
+				end
+
+				-- redraw the autoload icon on every row so the list matches
+				local elements = config_list["elements"]
+
+				for i = 1, #elements do
+					config_list:remove_icon(elements[i]["name"], autoload)
+				end
+
+				if menu["autoload"] then
+					config_list:add_icon(menu["autoload"], autoload)
+				end
+
+				menu["save_data"]()
+				sync_autoload_toggle(name)
+			end)
+
+			-- keep the toggle reflecting whichever row is selected. visibility is
+			-- handled below, together with the rest of the editor buttons
+			create_connection(config_list["on_selection_change"], function(config)
+				sync_autoload_toggle(config)
+			end)
+
 			create_connection(config_list["on_selection_change"], function(config)
 				local config = config or "AbbbbAzbbbbA12z"
 				local path = file_path .. "/configs/" .. config .. ".cfg"
@@ -9502,6 +9638,7 @@ do
 
 					config_last_updated:set_visible(false)
 					refresh_config_list:set_visible(true)
+					autoload_config:set_visible(false)
 				else
 					config_name:set_visible(false)
 					create_config:set_visible(false)
@@ -9511,6 +9648,7 @@ do
 					refresh_config_list:set_visible(false)
 					config_last_updated:set_visible(true)
 					config_last_updated:set_info("Text", data["date"])
+					autoload_config:set_visible(true)
 
 					local author = data["author"]
 					local username = nil
@@ -9594,6 +9732,14 @@ do
 				if selected_config and tostring(selected_config) and #selected_config > 0 then
 					config_list:remove_item(selected_config)
 					delfile(file_path .. "/configs/" .. selected_config .. ".cfg")
+
+					-- deleting the autoload config left the pointer dangling, so
+					-- the next inject tried to load a file that no longer exists
+					if menu["autoload"] == selected_config then
+						menu["autoload"] = nil
+						menu["save_data"]()
+					end
+
 					menu["new_notification"]("successfully deleted config " .. selected_config, 1)
 				end
 			end)
@@ -9633,6 +9779,7 @@ do
 			config_last_updated:set_visible(false)
 			delete_config:set_visible(false)
 			load_config:set_visible(false)
+			autoload_config:set_visible(false)
 		end
 	end
 
@@ -9699,6 +9846,23 @@ do
 			context_action_service:UnbindCoreAction(context_action_typing_core)
 			context_action_service:UnbindAction(context_action_scroll)
 
+			-- drop the input shield gui as well, otherwise it survives the
+			-- unload and keeps eating clicks over the game
+			local shield = menu["input_shield"]
+
+			if shield then
+				local gui = shield["Parent"]
+
+				shield["Visible"] = false
+
+				if gui then
+					gui["Parent"] = nil
+					gui:Destroy()
+				end
+
+				menu["input_shield"] = nil
+			end
+
 			env["getrawmetatable"] = real
 
 			for instance, mt in metatables do
@@ -9710,11 +9874,39 @@ do
 
 		-- >> ( render / tween loop )
 
+		-- call the tween functions directly instead of spawning a thread for
+		-- every tween every frame. spawning per tween per frame allocated a
+		-- coroutine each time, which is the single biggest cost in the loop.
+		-- pcall keeps one broken addon tween from killing the whole renderer
 		create_connection(
 			run_service["Heartbeat"],
 			LPH_NO_VIRTUALIZE(function(dt)
-				for i = 1, #heartbeat do
-					spawn(heartbeat[i], dt)
+				local count = #heartbeat
+				local dead = nil
+
+				for i = 1, count do
+					local fn = heartbeat[i]
+
+					if fn then
+						local s, err = pcall(fn, dt)
+
+						if not s then
+							warn("ui tween error: " .. tostring(err))
+
+							dead = dead or {}
+							dead[fn] = true
+						end
+					end
+				end
+
+				-- drop broken tweens after the pass so removing them cannot
+				-- shift the indexes out from under the loop
+				if dead then
+					for i = #heartbeat, 1, -1 do
+						if dead[heartbeat[i]] then
+							remove(heartbeat, i)
+						end
+					end
 				end
 			end)
 		)
@@ -9752,18 +9944,46 @@ do
 			end
 
 			if autoload_config then
-				menu_references["config_list"]:add_icon(autoload_config, autoload)
+				local config_list_ref = menu_references["config_list"]
+
+				if config_list_ref then
+					config_list_ref:add_icon(autoload_config, autoload)
+				end
+			end
+
+			-- reflect the stored autoload value in the editor toggle
+			if menu["sync_autoload_toggle"] then
+				menu["sync_autoload_toggle"](autoload_config)
+			end
+
+			-- actually load the autoload config. the setting only drew the icon
+			-- before, so "autoload" never applied anything on startup. it runs
+			-- after the theme is applied so the config's saved colors win, and
+			-- it is deferred a frame so every element has its drawings and flags
+			-- registered before the values are pushed into them
+			if autoload_config then
+				local autoload_path = file_path .. "/configs/" .. autoload_config .. ".cfg"
+
+				if isfile(autoload_path) then
+					delay(0, function()
+						local s, err = pcall(function()
+							menu["load_config"](autoload_config)
+						end)
+
+						if not s then
+							warn("failed to autoload config " .. tostring(autoload_config) .. ": " .. tostring(err))
+						end
+					end)
+				else
+					-- the file was deleted (or the folder was cleared) while the
+					-- config was still selected as the autoload: drop the pointer
+					-- so the UI stops advertising a config that cannot load
+					menu["autoload"] = nil
+					menu["save_data"]()
+				end
 			end
 		else
-			writefile(
-				file_path .. "/data.dat",
-				http_service:JSONEncode({
-					["notifications"] = do_notifications,
-					["favorites"] = {},
-					["hide_on_load"] = false,
-					["theme"] = "",
-				})
-			)
+			menu["save_data"]()
 		end
 	end
 end
