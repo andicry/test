@@ -95,6 +95,109 @@ local function call(callback, ...)
     end)
 end
 
+-- Molto icon provider (https://molto.pages.dev). Loaded lazily and used only
+-- for the per-element cog icon; degrades to no icon if the fetch fails. Molto's
+-- functions may be exposed as regular functions or as methods, so each call is
+-- tried both ways (dot first, then colon) and the first that does not error wins.
+local MoltoIcons
+
+local function callBoth(tableRef, key, ...)
+    if type(tableRef[key]) ~= "function" then
+        return false
+    end
+
+    if pcall(tableRef[key], ...) then
+        return true
+    end
+
+    return pcall(tableRef[key], tableRef, ...)
+end
+
+local function getIcons()
+    if MoltoIcons ~= nil then
+        return MoltoIcons or nil
+    end
+
+    local ok, result = pcall(function()
+        local src = game:HttpGet("https://molto.pages.dev/source.lua")
+        local fn = loadstring(src)
+        return fn and fn()
+    end)
+
+    if ok and type(result) == "table" and result.SetIcon then
+        callBoth(result, "SetProvider", "fluent")
+        callBoth(result, "PreloadAsync", { "settings-32-filled" })
+        MoltoIcons = result
+        return result
+    end
+
+    MoltoIcons = false
+    return nil
+end
+
+-- Apply a Molto icon to a GuiObject. Returns true on success, false if the
+-- provider is unavailable so the caller can fall back gracefully.
+local function setIcon(object, name, size)
+    local icons = getIcons()
+
+    if not icons then
+        return false
+    end
+
+    if size then
+        object.Size = UDim2.fromOffset(size, size)
+    end
+
+    if callBoth(icons, "SetIcon", object, name) then
+        return true
+    end
+
+    callBoth(icons, "PreloadAsync", { name })
+    return callBoth(icons, "SetIcon", object, name)
+end
+
+-- Per-element keybinds created from the cog settings panel. Each entry is
+-- { Key, Mode, Activate, State }. The input handlers below dispatch presses to
+-- the matching entry based on its mode (Toggle / Hold / Always).
+Library.ElementKeybinds = {}
+
+connect(UIS.InputBegan, function(input, processed)
+    if Library.CapturingElementKey or processed or UIS:GetFocusedTextBox() then
+        return
+    end
+
+    if input.UserInputType ~= Enum.UserInputType.Keyboard then
+        return
+    end
+
+    for _, entry in ipairs(Library.ElementKeybinds) do
+        if entry.Key == input.KeyCode and entry.Key ~= Enum.KeyCode.Unknown then
+            if entry.Mode == "Toggle" then
+                entry.State = not entry.State
+                call(entry.Activate, entry.State)
+            elseif entry.Mode == "Hold" then
+                entry.State = true
+                call(entry.Activate, true)
+            elseif entry.Mode == "Always" then
+                call(entry.Activate, true, entry.Key, entry.Mode)
+            end
+        end
+    end
+end)
+
+connect(UIS.InputEnded, function(input)
+    if input.UserInputType ~= Enum.UserInputType.Keyboard then
+        return
+    end
+
+    for _, entry in ipairs(Library.ElementKeybinds) do
+        if entry.Key == input.KeyCode and entry.Mode == "Hold" and entry.State then
+            entry.State = false
+            call(entry.Activate, false)
+        end
+    end
+end)
+
 local function new(class, properties, parent)
     local object = Instance.new(class)
 
@@ -316,10 +419,84 @@ local function folders()
             makefolder("Dopamine/configs")
         end
 
+        if not isfolder("Dopamine/assets") then
+            makefolder("Dopamine/assets")
+        end
+
         if not isfolder("Dopamine/themes") then
             makefolder("Dopamine/themes")
         end
     end)
+end
+
+-- Resolve a background source to an Image property Roblox can actually render.
+-- Roblox ImageLabels cannot load arbitrary external URLs directly, so http(s)
+-- URLs are downloaded once via HttpGet, written to the workspace and registered
+-- with getcustomasset. Asset ids and rbxasset:// strings pass through unchanged.
+local BackgroundCache = {}
+
+local function resolveAsset(source)
+    if source == nil then
+        return nil
+    end
+
+    if type(source) == "number" then
+        return "rbxassetid://" .. source
+    end
+
+    if type(source) ~= "string" then
+        return nil
+    end
+
+    if source:match("^rbxassetid://") or source:match("^rbxasset://") then
+        return source
+    end
+
+    if tonumber(source) then
+        return "rbxassetid://" .. source
+    end
+
+    if not source:match("^https?://") then
+        return nil
+    end
+
+    if BackgroundCache[source] then
+        return BackgroundCache[source]
+    end
+
+    if not isfile or not writefile or not getcustomasset then
+        return nil
+    end
+
+    local ok, result = pcall(function()
+        local folderOk, folderError = folders()
+        assert(folderOk, tostring(folderError))
+
+        local ext = source:match("%.([%w]+)[?#]?[^/]*$") or "png"
+        if not ext:match("^[%w]+$") then
+            ext = "png"
+        end
+        local hash = source:gsub("%W", "")
+        hash = hash:sub(1, 40)
+        local path = "Dopamine/assets/bg_" .. hash .. "." .. ext
+
+        if not isfile(path) then
+            local data = game:HttpGet(source)
+            assert(type(data) == "string" and #data > 256, "Invalid image download")
+            writefile(path, data)
+        end
+
+        local asset = getcustomasset(path)
+        assert(asset and asset ~= "", "Asset registration failed")
+        return asset
+    end)
+
+    if ok and result then
+        BackgroundCache[source] = result
+        return result
+    end
+
+    return nil
 end
 
 local function cleanName(value)
@@ -818,9 +995,9 @@ local function surface(parent, height)
     local shade = gradient(face, Theme.ElementTop, Theme.ElementBottom)
 
     local highlight = frame(face, {
-        Size = UDim2.new(1, 0, 0, 1),
+        Size = UDim2.new(1, 0, 0, 2),
         BackgroundColor3 = Theme.Inline,
-        BackgroundTransparency = 0.35
+        BackgroundTransparency = 0.2
     })
 
     bindTheme(highlight, "BackgroundColor3", "Inline")
@@ -828,7 +1005,7 @@ local function surface(parent, height)
     local bottom = frame(face, {
         AnchorPoint = Vector2.new(0, 1),
         Position = UDim2.fromScale(0, 1),
-        Size = UDim2.new(1, 0, 0, 1),
+        Size = UDim2.new(1, 0, 0, 2),
         BackgroundColor3 = Theme.Border
     })
 
@@ -1557,6 +1734,240 @@ function Library:KeybindList(options)
     return list
 end
 
+-- Per-element settings: a cog icon on `row` that opens a popup with rename and
+-- (when `activate` is given) a keybind with Toggle/Hold/Always modes. Molto
+-- supplies the cog glyph; a "·" fallback keeps the handle visible if the fetch
+-- fails. `caption` is the TextLabel whose .Text rename updates.
+local function cogSettings(row, caption, activate, options)
+    options = options or {}
+    local hasTooltip = options.tooltip == true
+    local rightOffset = hasTooltip and -30 or -14
+    local yScale, yOff = options.top and 0 or 0.5, options.top and 1 or -7
+
+    local icon          -- forward declared; the popup anchors to it
+    local settingsPopup
+    local entry          -- { Key, Mode, Activate, State } once a key is bound
+    local mode = "Toggle"
+    local modes = { "Toggle", "Hold", "Always" }
+    local capturing = false
+
+    local function removeEntry()
+        if not entry then
+            return
+        end
+        for index, current in ipairs(Library.ElementKeybinds) do
+            if current == entry then
+                table.remove(Library.ElementKeybinds, index)
+                break
+            end
+        end
+        entry = nil
+    end
+
+    local function keyLabel()
+        if entry and entry.Key and entry.Key ~= Enum.KeyCode.Unknown then
+            return tostring(entry.Key.Name):gsub("^Enum%.KeyCode%.", "")
+        end
+        return "Press a key"
+    end
+
+    local function open()
+        if settingsPopup then
+            settingsPopup:SetOpen(not settingsPopup.Open)
+            return
+        end
+
+        local hasKey = activate ~= nil
+        local width = 226
+        local height = hasKey and 176 or 96
+
+        settingsPopup = popup(icon, width, height)
+        local inner = settingsPopup.Inner
+
+        new("UIPadding", {
+            PaddingTop = UDim.new(0, 8),
+            PaddingBottom = UDim.new(0, 8),
+            PaddingLeft = UDim.new(0, 8),
+            PaddingRight = UDim.new(0, 8)
+        }, inner)
+
+        new("UIListLayout", {
+            SortOrder = Enum.SortOrder.LayoutOrder,
+            Padding = UDim.new(0, 6)
+        }, inner)
+
+        local header = text(inner, "Element Settings", {
+            Size = UDim2.new(1, 0, 0, 18),
+            LayoutOrder = 1,
+            TextXAlignment = Enum.TextXAlignment.Center
+        })
+        bindTheme(header, "TextColor3", "Accent")
+
+        local function row(layoutOrder, label)
+            local r = frame(inner, {
+                Size = UDim2.new(1, 0, 0, 20),
+                BackgroundTransparency = 1,
+                LayoutOrder = layoutOrder
+            })
+            text(r, label, {
+                Size = UDim2.new(0, 64, 1, 0),
+                TextXAlignment = Enum.TextXAlignment.Left
+            })
+            return r
+        end
+
+        -- Rename
+        local renameRow = row(2, "Rename")
+        local renameBox = new("TextBox", {
+            Position = UDim2.fromOffset(68, 1),
+            Size = UDim2.new(1, -68, 1, -2),
+            BackgroundColor3 = Theme.Element,
+            BorderSizePixel = 0,
+            Text = caption and caption.Text or "",
+            PlaceholderText = "Name...",
+            ClearTextOnFocus = false,
+            TextXAlignment = Enum.TextXAlignment.Left
+        }, renameRow)
+        bindTheme(renameBox, "BackgroundColor3", "Element")
+        border(renameBox, "Border")
+
+        connect(renameBox.FocusLost, function()
+            if caption and renameBox.Text ~= "" then
+                caption.Text = renameBox.Text
+            else
+                renameBox.Text = caption and caption.Text or ""
+            end
+        end)
+
+        if hasKey then
+            -- Keybind capture
+            local keyRow = row(3, "Keybind")
+            local keyBtn, keyFace = surface(keyRow, 18)
+            keyBtn.Position = UDim2.fromOffset(68, 1)
+            keyBtn.Size = UDim2.new(1, -68, 1, -2)
+            keyBtn.LayoutOrder = 3
+            local keyCaption = text(keyFace, keyLabel(), {
+                Size = UDim2.fromScale(1, 1),
+                TextXAlignment = Enum.TextXAlignment.Center
+            })
+
+            connect(keyBtn.MouseButton1Click, function()
+                capturing = true
+                Library.CapturingElementKey = true
+                keyCaption.Text = "Press a key..."
+            end)
+
+            connect(UIS.InputBegan, function(input)
+                if not capturing then
+                    return
+                end
+                if input.UserInputType == Enum.UserInputType.Keyboard then
+                    local chosen = input.KeyCode
+                    if chosen == Enum.KeyCode.Escape or chosen == Enum.KeyCode.Backspace then
+                        chosen = Enum.KeyCode.Unknown
+                    end
+                    removeEntry()
+                    if chosen ~= Enum.KeyCode.Unknown then
+                        entry = { Key = chosen, Mode = mode, Activate = activate, State = false }
+                        table.insert(Library.ElementKeybinds, entry)
+                    end
+                    capturing = false
+                    Library.CapturingElementKey = false
+                    keyCaption.Text = keyLabel()
+                end
+            end)
+
+            -- Mode cycle
+            local modeRow = row(4, "Mode")
+            local modeBtn, modeFace = surface(modeRow, 18)
+            modeBtn.Position = UDim2.fromOffset(68, 1)
+            modeBtn.Size = UDim2.new(1, -68, 1, -2)
+            modeBtn.LayoutOrder = 4
+            local modeCaption = text(modeFace, mode, {
+                Size = UDim2.fromScale(1, 1),
+                TextXAlignment = Enum.TextXAlignment.Center
+            })
+
+            connect(modeBtn.MouseButton1Click, function()
+                local index = 1
+                for i, m in ipairs(modes) do
+                    if m == mode then
+                        index = i
+                        break
+                    end
+                end
+                mode = modes[(index % #modes) + 1]
+                if entry then
+                    entry.Mode = mode
+                end
+                modeCaption.Text = mode
+            end)
+
+            -- Clear
+            local clearBtn, clearFace = surface(inner, 22)
+            clearBtn.LayoutOrder = 5
+            clearBtn.Size = UDim2.new(1, 0, 0, 22)
+            text(clearFace, "Clear Keybind", {
+                Size = UDim2.fromScale(1, 1),
+                TextXAlignment = Enum.TextXAlignment.Center
+            })
+
+            connect(clearBtn.MouseButton1Click, function()
+                removeEntry()
+                capturing = false
+                Library.CapturingElementKey = false
+                keyCaption.Text = keyLabel()
+            end)
+        end
+
+        -- Close
+        local closeBtn, closeFace = surface(inner, 22)
+        closeBtn.LayoutOrder = hasKey and 6 or 3
+        closeBtn.Size = UDim2.new(1, 0, 0, 22)
+        text(closeFace, "Close", {
+            Size = UDim2.fromScale(1, 1),
+            TextXAlignment = Enum.TextXAlignment.Center
+        })
+
+        connect(closeBtn.MouseButton1Click, function()
+            settingsPopup:SetOpen(false)
+        end)
+
+        settingsPopup:SetOpen(true)
+    end
+
+    -- Inline gear fallback: a real cog shows even if Molto can't be fetched, so
+    -- the handle never collapses to a plain dot.
+    local cogFallback = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAMAAAC67D+PAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAAGUExURf///wAAAFXC034AAAACdFJOU/8A5bcwSgAAAAlwSFlzAAAQKAAAECgBJz8A6wAAABh0RVh0U29mdHdhcmUAUGFpbnQuTkVUIDUuMS4y+7wDtgAAALZlWElmSUkqAAgAAAAFABoBBQABAAAASgAAABsBBQABAAAAUgAAACgBAwABAAAAAgAAADEBAgAQAAAAWgAAAGmHBAABAAAAagAAAAAAAAB3mgEA6AMAAHeaAQDoAwAAUGFpbnQuTkVUIDUuMS4yAAMAAJAHAAQAAAAwMjMwAaADAAEAAAABAAAABaAEAAEAAACUAAAAAAAAAAIAAQACAAQAAABSOTgAAgAHAAQAAAAwMTAwAAAAAEyPNqYn0aVIAAAALElEQVQYV2NgBAIGCAmioQhIQACQCZaGYBAJoZGYSApgUhATYAiikJGRkREACr4AMZ+SUSoAAAAASUVORK5CYII="
+
+    icon = new("ImageButton", {
+        Size = UDim2.fromOffset(14, 14),
+        Position = UDim2.new(1, rightOffset, yScale, yOff),
+        BackgroundTransparency = 1,
+        AutoButtonColor = false,
+        Image = cogFallback,
+        ImageColor3 = Theme.Text,
+        ImageTransparency = 0,
+        ZIndex = 5
+    }, row)
+    bindTheme(icon, "ImageColor3", "Text")
+
+    connect(icon.MouseButton1Click, open)
+    connect(icon.MouseEnter, function()
+        tween(icon, { ImageColor3 = Theme.Accent }, 0.1)
+    end)
+    connect(icon.MouseLeave, function()
+        tween(icon, { ImageColor3 = Theme.Text }, 0.1)
+    end)
+
+    -- Prefer Molto's vector gear; the inline base64 gear above stays if it fails.
+    if not setIcon(icon, "settings-32-filled", 14) then
+        icon.Image = cogFallback
+    end
+
+    return icon
+end
+
 local function tooltip(anchor, message)
     if not message then
         return
@@ -1644,7 +2055,19 @@ function Library:CreateWindow(options)
         ClipsDescendants = true
     })
 
+    -- Menu background image. Hidden by default; shown via window:SetBackground.
+    -- Renders behind all content (ZIndex 0) and stretches to fill the window.
+    local background = new("ImageLabel", {
+        Size = UDim2.fromScale(1, 1),
+        BackgroundTransparency = 1,
+        Image = "",
+        ScaleType = Enum.ScaleType.Stretch,
+        ImageTransparency = 1,
+        ZIndex = 0
+    }, main)
+
     local scale = new("UIScale", {}, outer)
+    local syncShadow  -- forward declared; defined once the shadow exists
 
     local function resize()
         local size = Gui.AbsoluteSize
@@ -1655,9 +2078,43 @@ function Library:CreateWindow(options)
             scale.Scale = math.min(1, (size.X - 16) / baseW, (size.Y - 16) / baseH)
             scale.Scale = math.max(scale.Scale, 0.35)
         end
+
+        if syncShadow then
+            syncShadow()
+        end
     end
 
     connect(Gui:GetPropertyChangedSignal("AbsoluteSize"), resize)
+
+    -- Soft drop shadow behind the window for depth. Tracks outer's position,
+    -- size and scale so it follows drags, resizes and the open/close tween.
+    local shadowAsset = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAQAAABpN6lAAAAABGdBTUEAALGPC/xhBQAAACBjSFJNAAB6JgAAgIQAAPoAAACA6AAAdTAAAOpgAAA6mAAAF3GculE8AAAAAmJLR0QA/4ePzL8AAAAJcEhZcwAADsMAAA7DAcdvqGQAAAAHdElNRQfiAQkTIxqKm+UhAAACvElEQVR42u2dzY7aMBhFjxPHEzJQBolRq77/27XSwBCSkD/PwinS7LpBVwrfeYLjI4Ozuy6Cw+HIyHBkOMCxTiIQmYnMzEQi0S9Hz/EUePIlxDpJB58YGRiZmJlTgIKCQMkLYYmwTtLhe2509AwM6QbkFJRUbKnYEChWHGCgp6WhpoF0AzI8gYodB/bs2BDI1aYPYqKn5cIZR7oPkyejoGTLgZ+888aOEq82fRAjHRdOlEBkZGTwODwvVOx55zdH9rxSqE0fxMCVMxXQ0dHS4TwZOYENO9448osDW4La9EH01GyAhhOfBHKy9Ar4JcGeA0d2Kw5QAu3yT+fJcB7IyJdn8JUtO36sOAB0vFISKNJz7+9fgelTKBAIlGrThxEI3z743Fpf/P/GAqgF1FgAtYAaC6AWUGMB1AJqLIBaQI0FUAuosQBqATUWQC2gxgKoBdRYALWAGgugFlBjAdQCaiyAWkCNBVALqLEAagE1FkAtoMYCqAXUWAC1gBoLoBZQYwHUAmosgFpAjQVQC6ixAGoBNRZALaDGAqgF1FgAtYAaC6AWUGMB1AJqLIBaQI0FUAuosQBqATUWQC2gxgKoBdRYALWAGgugFlBjAdQCaiyAWkCNBVALqLEAagE1FkAtoMYCqAXUWAC1gBoLoBZQYwHUAmosgFpAjQVQC6ixAGoBNRZALaDGAqgF1FgAtYAaC6AWUGMB1AJqLIBaQI0nfpsi7enp1VIPI53uPriaVmfT9ORAT8eVmhJWvDZ3oea6TK5OzOkGzIz3Lc4N0K04QM0HZy609IzMRM98nyI9UQHt6ic3/3JaEkzMnsjIjYYzJdA8xejqH8403BjTDRjoqHFAx+lJZnc/qOkYmP3yD9AAkY7PJxpe7hnTT2BiAGZG2ieb3p6ILj75+LqL4O7Dq245/HoDpAjx32cQ8QtpRORenSWX2AAAABl0RVh0U29mdHdhcmUAcGFpbnQubmV0IDQuMC4xOdTWsmQAAAAASUVORK5CYII="
+
+    local shadow = new("ImageLabel", {
+        AnchorPoint = Vector2.new(0.5, 0.5),
+        Position = outer.Position,
+        Size = UDim2.fromOffset(outer.Size.X.Offset + 28, outer.Size.Y.Offset + 28),
+        BackgroundTransparency = 1,
+        Image = shadowAsset,
+        ScaleType = Enum.ScaleType.Slice,
+        SliceCenter = Rect.new(24, 24, 104, 104),
+        ImageTransparency = 0.5,
+        ZIndex = 0,
+        Visible = outer.Visible
+    }, Gui)
+
+    local shadowScale = new("UIScale", {}, shadow)
+
+    syncShadow = function()
+        shadow.Position = outer.Position
+        shadow.Size = UDim2.fromOffset(outer.Size.X.Offset + 28, outer.Size.Y.Offset + 28)
+        shadowScale.Scale = scale.Scale
+        shadow.Visible = outer.Visible
+    end
+
+    connect(outer:GetPropertyChangedSignal("Size"), syncShadow)
+    connect(outer:GetPropertyChangedSignal("Position"), syncShadow)
+    connect(outer:GetPropertyChangedSignal("Visible"), syncShadow)
     resize()
 
     local header = frame(main, {
@@ -1744,7 +2201,7 @@ function Library:CreateWindow(options)
 
     local pages = frame(bodyInner, {
         Position = UDim2.fromOffset(7, 7),
-        Size = UDim2.new(1, -14, 1, -41),
+        Size = UDim2.new(1, -14, 1, -48),
         BackgroundTransparency = 1,
         ClipsDescendants = true
     })
@@ -1752,7 +2209,7 @@ function Library:CreateWindow(options)
     local tabBar = frame(bodyInner, {
         AnchorPoint = Vector2.new(0, 1),
         Position = UDim2.fromScale(0, 1),
-        Size = UDim2.new(1, 0, 0, 27),
+        Size = UDim2.new(1, 0, 0, 34),
         BackgroundColor3 = Theme.Border
     })
 
@@ -1854,10 +2311,39 @@ function Library:CreateWindow(options)
         end
     end
 
+    -- Set the menu background to an asset id (number/"123") or an image URL.
+    -- Pass nil to clear. `transparency` (0..1) controls how strong the image is.
+    function window:SetBackground(source, transparency)
+        if source == nil then
+            background.Image = ""
+            background.ImageTransparency = 1
+            body.BackgroundTransparency = 0
+            bodyInner.BackgroundTransparency = 0
+            tabBar.BackgroundTransparency = 0
+            return
+        end
+
+        local asset = resolveAsset(source)
+
+        if not asset then
+            return false, "Could not load background asset"
+        end
+
+        background.Image = asset
+        background.ImageTransparency = tonumber(transparency) or 0
+
+        -- The body panel (border + interior) and tab bar are made transparent
+        -- so the backdrop shows through; sections and tab buttons stay opaque
+        -- and float on top of the image.
+        body.BackgroundTransparency = 1
+        bodyInner.BackgroundTransparency = 1
+        tabBar.BackgroundTransparency = 1
+    end
+
     function window:Tab(config)
         config = config or {}
 
-        local button, face = surface(tabBar, 27)
+        local button, face = surface(tabBar, 34)
         button.LayoutOrder = #self.Tabs + 1
 
         local caption = text(face, config.Name or "Tab", {
@@ -1929,7 +2415,7 @@ function Library:CreateWindow(options)
 
             side = side == 2 and 2 or 1
 
-            local outerSection = frame(columns[side], {
+            local outerSection = frame(self.Columns[side], {
                 Size = UDim2.new(1, -2, 0, 0),
                 BackgroundColor3 = Theme.Border,
                 LayoutOrder = self.SectionCount
@@ -1990,11 +2476,15 @@ function Library:CreateWindow(options)
                 order(row)
 
                 local caption = text(row, config.Name or "Label", {
-                    Size = UDim2.new(1, config.Tooltip and -18 or 0, 1, 0),
+                    Size = UDim2.new(1, (config.Cog and (config.Tooltip and -34 or -18) or (config.Tooltip and -18 or 0)), 1, 0),
                     TextWrapped = config.Wrapped == true
                 })
 
                 tooltip(row, config.Tooltip)
+
+                if config.Cog and type(config.Live) ~= "function" then
+                    cogSettings(row, caption, nil, { tooltip = config.Tooltip ~= nil })
+                end
 
                 -- Live label: pass a function that returns a string/value and it
                 -- is polled on a throttle to keep the label text up to date.
@@ -2031,15 +2521,23 @@ function Library:CreateWindow(options)
             function section:Button(config)
                 config = config or {}
 
-                local buttonObject, face = surface(sectionBody, 22)
+                local buttonObject, face = surface(sectionBody, 28)
                 order(buttonObject)
 
                 local caption = text(face, config.Name or "Button", {
-                    Size = UDim2.fromScale(1, 1),
+                    Size = UDim2.new(1, config.Cog and -24 or 0, 1, 0),
                     TextXAlignment = Enum.TextXAlignment.Center
                 })
 
                 tooltip(buttonObject, config.Tooltip)
+
+                if config.Cog then
+                    cogSettings(buttonObject, caption, function(state)
+                        if state ~= false then
+                            call(config.Callback)
+                        end
+                    end, { tooltip = config.Tooltip ~= nil })
+                end
 
                 connect(buttonObject.MouseButton1Click, function()
                     call(config.Callback)
@@ -2089,7 +2587,7 @@ function Library:CreateWindow(options)
 
                 local caption = text(row, config.Name or "Toggle", {
                     Position = UDim2.fromOffset(21, 0),
-                    Size = UDim2.new(1, config.Tooltip and -36 or -21, 1, 0)
+                    Size = UDim2.new(1, (config.Cog and (config.Tooltip and -52 or -36) or (config.Tooltip and -36 or -21)), 1, 0)
                 })
 
                 tooltip(row, config.Tooltip)
@@ -2150,6 +2648,12 @@ function Library:CreateWindow(options)
 
                 set(value, true)
 
+                if config.Cog then
+                    cogSettings(row, caption, function(state)
+                        set(state)
+                    end, { tooltip = config.Tooltip ~= nil })
+                end
+
                 local result = {
                     Instance = row,
                     Set = function(_, nextValue, silent)
@@ -2204,9 +2708,11 @@ function Library:CreateWindow(options)
                 order(root)
 
                 if hasTitle then
-                    text(root, config.Name, {
-                        Size = UDim2.new(1, 0, 0, 15)
+                    local caption = text(root, config.Name, {
+                        Size = UDim2.new(1, config.Cog and -18 or 0, 0, 15)
                     })
+
+                    if config.Cog then cogSettings(root, caption, nil, { top = true }) end
                 end
 
                 local box, face = surface(root, 22)
@@ -2302,9 +2808,11 @@ function Library:CreateWindow(options)
 
                 order(root)
 
-                text(root, config.Name or "Dropdown", {
-                    Size = UDim2.new(1, 0, 0, 15)
+                local caption = text(root, config.Name or "Dropdown", {
+                    Size = UDim2.new(1, config.Cog and -18 or 0, 0, 15)
                 })
+
+                if config.Cog then cogSettings(root, caption, nil, { top = true }) end
 
                 local buttonObject, face = surface(root, 22)
                 buttonObject.Position = UDim2.fromOffset(0, 20)
@@ -2490,9 +2998,11 @@ function Library:CreateWindow(options)
 
                 order(root)
 
-                text(root, config.Text or config.Name or "Multi dropdown", {
-                    Size = UDim2.new(1, 0, 0, 15)
+                local caption = text(root, config.Text or config.Name or "Multi dropdown", {
+                    Size = UDim2.new(1, config.Cog and -18 or 0, 0, 15)
                 })
+
+                if config.Cog then cogSettings(root, caption, nil, { top = true }) end
 
                 local buttonObject, face = surface(root, 22)
                 buttonObject.Position = UDim2.fromOffset(0, 20)
@@ -2655,9 +3165,11 @@ function Library:CreateWindow(options)
 
                 order(root)
 
-                text(root, config.Name or "Slider", {
-                    Size = UDim2.new(1, 0, 0, 15)
+                local caption = text(root, config.Name or "Slider", {
+                    Size = UDim2.new(1, config.Cog and -18 or 0, 0, 15)
                 })
+
+                if config.Cog then cogSettings(root, caption, nil, { top = true }) end
 
                 local bar = new("TextButton", {
                     Position = UDim2.fromOffset(0, 20),
