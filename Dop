@@ -1562,6 +1562,23 @@ local function tooltip(anchor, message)
         return
     end
 
+    -- (?) indicator: the tooltip only appears while hovering this icon, not the
+    -- whole row. Active = false so clicks pass through to the control below.
+    local icon = new("TextLabel", {
+        Size = UDim2.fromOffset(14, 14),
+        Position = UDim2.new(1, -14, 0.5, -7),
+        BackgroundTransparency = 1,
+        Active = false,
+        Text = "?",
+        TextSize = 13,
+        TextColor3 = Theme.TextInactive,
+        TextStrokeColor3 = Color3.new(0, 0, 0),
+        TextStrokeTransparency = 0.3,
+        TextXAlignment = Enum.TextXAlignment.Center,
+        TextYAlignment = Enum.TextYAlignment.Center
+    }, anchor)
+    bindTheme(icon, "TextColor3", "TextInactive")
+
     local holder, inner = panel(PopupRoot, {
         Size = UDim2.fromOffset(180, 27),
         BackgroundColor3 = Theme.Border,
@@ -1582,17 +1599,17 @@ local function tooltip(anchor, message)
 
     local token = 0
 
-    connect(anchor.MouseEnter, function()
+    connect(icon.MouseEnter, function()
         token += 1
         local current = token
 
         task.delay(0.45, function()
-            if current ~= token or not anchor.Parent then
+            if current ~= token or not icon.Parent then
                 return
             end
 
-            local pos = anchor.AbsolutePosition
-            local size = anchor.AbsoluteSize
+            local pos = icon.AbsolutePosition
+            local size = icon.AbsoluteSize
             local screen = PopupRoot.AbsoluteSize
             local inset = GuiService:GetGuiInset()
 
@@ -1610,7 +1627,7 @@ local function tooltip(anchor, message)
         end)
     end)
 
-    connect(anchor.MouseLeave, function()
+    connect(icon.MouseLeave, function()
         token += 1
         holder.Visible = false
     end)
@@ -1973,7 +1990,7 @@ function Library:CreateWindow(options)
                 order(row)
 
                 local caption = text(row, config.Name or "Label", {
-                    Size = UDim2.fromScale(1, 1),
+                    Size = UDim2.new(1, config.Tooltip and -18 or 0, 1, 0),
                     TextWrapped = config.Wrapped == true
                 })
 
@@ -2072,7 +2089,7 @@ function Library:CreateWindow(options)
 
                 local caption = text(row, config.Name or "Toggle", {
                     Position = UDim2.fromOffset(21, 0),
-                    Size = UDim2.new(1, -21, 1, 0)
+                    Size = UDim2.new(1, config.Tooltip and -36 or -21, 1, 0)
                 })
 
                 tooltip(row, config.Tooltip)
@@ -2081,6 +2098,19 @@ function Library:CreateWindow(options)
                     shade.Color = value
                         and ColorSequence.new(Theme.Accent:Lerp(Color3.new(1, 1, 1), 0.2), Theme.Accent:Lerp(Color3.new(0, 0, 0), 0.25))
                         or ColorSequence.new(Theme.ElementTop, Theme.ElementBottom)
+                end
+
+                -- Advanced toggles reveal a block of dependent options below them
+                -- when enabled. The dependents live in the same section body and
+                -- are shown/hidden together with the toggle state.
+                local dependents = {}
+
+                local function applyDependents(state)
+                    for _, control in ipairs(dependents) do
+                        if control.Instance and control.Instance.Parent then
+                            control.Instance.Visible = state
+                        end
+                    end
                 end
 
                 local function set(nextValue, silent)
@@ -2095,6 +2125,7 @@ function Library:CreateWindow(options)
                     end
 
                     applyShade()
+                    applyDependents(value)
 
                     tween(caption, {
                         TextColor3 = value and Theme.Text or Theme.TextInactive
@@ -2119,7 +2150,7 @@ function Library:CreateWindow(options)
 
                 set(value, true)
 
-                return {
+                local result = {
                     Instance = row,
                     Set = function(_, nextValue, silent)
                         set(nextValue, silent)
@@ -2128,6 +2159,34 @@ function Library:CreateWindow(options)
                         return value
                     end
                 }
+
+                if config.Advanced then
+                    -- Proxy section builders (Slider, Dropdown, Toggle, ...) so
+                    -- any control created through this object is revealed only
+                    -- while the toggle is enabled.
+                    setmetatable(result, {
+                        __index = function(_, key)
+                            local method = section[key]
+
+                            if type(method) ~= "function" then
+                                return nil
+                            end
+
+                            return function(_, opts)
+                                local control = method(section, opts)
+
+                                if control and control.Instance then
+                                    table.insert(dependents, control)
+                                    control.Instance.Visible = value
+                                end
+
+                                return control
+                            end
+                        end
+                    })
+                end
+
+                return result
             end
 
             function section:Textbox(config)
@@ -3743,10 +3802,154 @@ function Library:Exit()
         self.PopupGui:Destroy()
     end
 
+    if self.BackdropGui then
+        self.BackdropGui:Destroy()
+    end
+
+    if self.SnowGui then
+        self.SnowGui:Destroy()
+    end
+
+    if self.BlurEffect then
+        self.BlurEffect:Destroy()
+    end
+
     if env.DopamineLibrary == self then
         env.DopamineLibrary = nil
     end
 end
+
+-- Backdrop / snow / blur: optional ambience drawn behind the window. Each is
+-- only active while the menu is open so it never interferes with gameplay.
+local BackdropGui
+local SnowGui
+local SnowFlakes = {}
+
+local function menuIsOpen()
+    return Library.Window ~= nil and Library.Window.IsOpen == true
+end
+
+function Library:SetBackdrop(enabled)
+    self.BackdropEnabled = enabled == true
+
+    if self.BackdropEnabled and not BackdropGui then
+        BackdropGui = new("ScreenGui", {
+            Name = "DopamineBackdrop",
+            DisplayOrder = 999,
+            IgnoreGuiInset = true,
+            ResetOnSpawn = false
+        }, guiParent())
+
+        self.BackdropGui = BackdropGui
+
+        self.BackdropFrame = new("Frame", {
+            Size = UDim2.fromScale(1, 1),
+            BackgroundColor3 = Color3.new(0, 0, 0),
+            BackgroundTransparency = 0.4,
+            BorderSizePixel = 0,
+            Visible = false
+        }, BackdropGui)
+    end
+
+    if self.BackdropFrame then
+        self.BackdropFrame.Visible = self.BackdropEnabled and menuIsOpen()
+    end
+end
+
+function Library:SetSnow(enabled)
+    self.SnowEnabled = enabled == true
+
+    if self.SnowEnabled and not SnowGui then
+        SnowGui = new("ScreenGui", {
+            Name = "DopamineSnow",
+            DisplayOrder = 999,
+            IgnoreGuiInset = true,
+            ResetOnSpawn = false,
+            Enabled = false
+        }, guiParent())
+
+        self.SnowGui = SnowGui
+
+        for _ = 1, 70 do
+            local size = 1 + math.random() * 3
+            local flake = new("Frame", {
+                Size = UDim2.fromOffset(size, size),
+                BackgroundColor3 = Color3.new(1, 1, 1),
+                BackgroundTransparency = 0.15 + math.random() * 0.25,
+                BorderSizePixel = 0,
+                Visible = true
+            }, SnowGui)
+
+            table.insert(SnowFlakes, {
+                Frame = flake,
+                X = math.random(),
+                Y = math.random(),
+                Speed = 0.08 + math.random() * 0.14,
+                Phase = math.random() * math.pi * 2
+            })
+        end
+    end
+
+    if SnowGui then
+        SnowGui.Enabled = self.SnowEnabled and menuIsOpen()
+    end
+end
+
+function Library:SetBlur(amount)
+    amount = math.clamp(tonumber(amount) or 0, 0, 24)
+    self.BlurAmount = amount
+
+    if amount > 0 and not BlurEffect then
+        pcall(function()
+            BlurEffect = Instance.new("BlurEffect")
+            BlurEffect.Size = 0
+            BlurEffect.Parent = game:GetService("Lighting")
+        end)
+        self.BlurEffect = BlurEffect
+    end
+
+    if BlurEffect then
+        BlurEffect.Size = menuIsOpen() and amount or 0
+    end
+end
+
+-- Keep the ambience in sync with the menu open state and animate the snow.
+connect(RunService.RenderStepped, function(delta)
+    if Library.Unloaded then
+        return
+    end
+
+    local open = menuIsOpen()
+
+    if Library.BackdropFrame then
+        Library.BackdropFrame.Visible = Library.BackdropEnabled and open
+    end
+
+    if SnowGui then
+        local shouldRun = Library.SnowEnabled and open
+        SnowGui.Enabled = shouldRun
+
+        if shouldRun then
+            local now = os.clock()
+
+            for _, flake in ipairs(SnowFlakes) do
+                flake.Y = flake.Y + flake.Speed * delta
+
+                if flake.Y > 1 then
+                    flake.Y = 0
+                    flake.X = math.random()
+                end
+
+                local sway = math.sin(now * 2 + flake.Phase) * 0.02
+                flake.Frame.Position = UDim2.fromScale(flake.X + sway, flake.Y)
+            end
+        end
+    end
+
+    if BlurEffect then
+        BlurEffect.Size = open and Library.BlurAmount or 0
+    end
+end)
 
 env.DopamineLibrary = Library
 
