@@ -2112,7 +2112,7 @@ do
 			return Enum["ContextActionResult"]["Pass"]
 		end
 
-		if input["UserInputType"] ~= Enum["UserInputType"]["KeyDown"] then
+		if input["UserInputType"] ~= Enum["UserInputType"]["Keyboard"] then
 			return Enum["ContextActionResult"]["Pass"]
 		end
 
@@ -2212,7 +2212,7 @@ do
 				menu["sink_typing"],
 				false,
 				high_priority,
-				Enum["UserInputType"]["KeyDown"]
+				Enum["UserInputType"]["Keyboard"]
 			)
 
 			typing_connection = create_connection(user_input_service["InputBegan"], function(input, _)
@@ -2526,7 +2526,7 @@ do
 		keybind_text["Position"] = udim2_new(0, (size - 2) / 2, 0, -2)
 
 		local escape = Enum["KeyCode"]["Escape"]
-		local tilde = Enum["KeyCode"]["Tilde"]
+		local tilde = Enum["KeyCode"]["Backquote"]
 
 		binding_connection = create_connection(user_input_service["InputBegan"], function(input, _)
 			local key = shortened_characters[input["UserInputType"]] and input["UserInputType"] or input["KeyCode"]
