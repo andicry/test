@@ -24,26 +24,26 @@ end
 
 -- > ( global cheat variables )
 
-local file_path = getgenv().custom_folder or "club.lol"
-local user_input_service = cloneref(game:GetService("UserInputService"))
+file_path = getgenv().custom_folder or "club.lol"
+user_input_service = cloneref(game:GetService("UserInputService"))
 local get_mouse_location = user_input_service["GetMouseLocation"]
-local players_service = cloneref(game:GetService("Players"))
-local local_player = players_service["LocalPlayer"]
+players_service = cloneref(game:GetService("Players"))
+local_player = players_service["LocalPlayer"]
 local mouse = local_player:GetMouse()
-local tween_service = cloneref(game:GetService("TweenService"))
-local get_value = tween_service["GetValue"]
-local run_service = cloneref(game:GetService("RunService"))
-local http_service = cloneref(game:GetService("HttpService"))
+tween_service = cloneref(game:GetService("TweenService"))
+get_value = tween_service["GetValue"]
+run_service = cloneref(game:GetService("RunService"))
+http_service = cloneref(game:GetService("HttpService"))
 local workspace = workspace
 local camera = cloneref(workspace["CurrentCamera"])
-local hui = cloneref(gethui())
+hui = cloneref(gethui())
 
-local color3_fromrgb = Color3["fromRGB"]
-local color3_lerp = color3_fromrgb()["Lerp"]
-local vector2_new = Vector2["new"]
-local udim2_new = UDim2["new"]
+color3_fromrgb = Color3["fromRGB"]
+color3_lerp = color3_fromrgb()["Lerp"]
+vector2_new = Vector2["new"]
+udim2_new = UDim2["new"]
 
-local math_random = math["random"]
+math_random = math["random"]
 local clock = os["clock"]
 local delay = task["delay"]
 local spawn = task["spawn"]
@@ -53,25 +53,25 @@ local wait = task["wait"]
 local sqrt = math["sqrt"]
 local type = type
 
-local shadow_image_data = base64_decode(
+shadow_image_data = base64_decode(
 	"iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAQAAABpN6lAAAAABGdBTUEAALGPC/xhBQAAACBjSFJNAAB6JgAAgIQAAPoAAACA6AAAdTAAAOpgAAA6mAAAF3CculE8AAAAAmJLR0QA/4ePzL8AAAAJcEhZcwAADsMAAA7DAcdvqGQAAAAHdElNRQfiAQkTIxqKm+UhAAACvElEQVR42u2dzY7aMBhFjxPHEzJQBolRq77/27XSwBCSkD/PwinS7LpBVwrfeYLjI4Ozuy6Cw+HIyHBkOMCxTiIQmYnMzEQi0S9Hz/EUePIlxDpJB58YGRiZmJlTgIKCQMkLYYmwTtLhe2509AwM6QbkFJRUbKnYEChWHGCgp6WhpoF0AzI8gYodB/bs2BDI1aYPYqKn5cIZR7oPkyejoGTLgZ+888aOEq82fRAjHRdOlEBkZGTwODwvVOx55zdH9rxSqE0fxMCVMxXQ0dHS4TwZOYENO9448osDW4La9EH01GyAhhOfBHKy9Ar4JcGeA0d2Kw5QAu3yT+fJcB7IyJdn8JUtO36sOAB0vFISKNJz7+9fgelTKBAIlGrThxEI3z743Fpf/P/GAqgF1FgAtYAaC6AWUGMB1AJqLIBaQI0FUAuosQBqATUWQC2gxgKoBdRYALWAGgugFlBjAdQCaiyAWkCNBVALqLEAagE1FkAtoMYCqAXUWAC1gBoLoBZQYwHUAmosgFpAjQVQC6ixAGoBNRZALaDGAqgF1FgAtYAaC6AWUGMB1AJqLIBaQI0FUAuosQBqATUWQC2gxgKoBdRYALWAGgugFlBjAdQCaiyAWkCNBVALqLEAagE1FkAtoMYCqAXUWAC1gBoLoBZQYwHUAmosgFpAjQVQC6ixAGoBNRZALaDGAqgF1FgAtYAaC6AWUGMB1AJqLIBaQI0nfpsi7enp1VIPI53uPriaVmfT9ORAT8eVmhJWvDZ3oea6TK5OzOkGzIz3Lc4N0K04QM0HZy609IzMRM98nyI9UQHt6ic3/3JaEkzMnsjIjYYzJdA8xejqH8403BjTDRjoqHFAx+lJZnc/qOkYmP3yD9AAkY7PJxpe7hnTT2BiAGZG2ieb3p6ILj75+LqL4O7Dq245/HoDpAjx32cQ8QtpRORenSWX2AAAABl0RVh0U29mdHdhcmUAcGFpbnQubmV0IDQuMC4xOdTWsmQAAAAASUVORK5CYII="
 )
-local pixel_image_data = base64_decode(
+pixel_image_data = base64_decode(
 	"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsIAAA7CARUoSoAAAAAYdEVYdFNvZnR3YXJlAFBhaW50Lk5FVCA1LjEuMvu8A7YAAAC2ZVhJZklJKgAIAAAABQAaAQUAAQAAAEoAAAAbAQUAAQAAAFIAAAAoAQMAAQAAAAIAAAAxAQIAEAAAAFoAAABphwQAAQAAAGoAAAAAAAAA8nYBAOgDAADydgEA6AMAAFBhaW50Lk5FVCA1LjEuMgADAACQBwAEAAAAMDIzMAGgAwABAAAAAQAAAAWgBAABAAAAlAAAAAAAAAACAAEAAgAEAAAAUjk4AAIABwAEAAAAMDEwMAAAAACOO8FX0xe8TgAAAAxJREFUGFdj+P//PwAF/gL+pzWBhAAAAABJRU5ErkJggg=="
 )
-local exponential = Enum["EasingStyle"]["Exponential"]
-local circular = Enum["EasingStyle"]["Circular"]
-local quad = Enum["EasingStyle"]["Quad"]
+exponential = Enum["EasingStyle"]["Exponential"]
+circular = Enum["EasingStyle"]["Circular"]
+quad = Enum["EasingStyle"]["Quad"]
 
-local show_transparency = { Transparency = 1 }
-local hide_transparency = { Transparency = 0 }
+show_transparency = { Transparency = 1 }
+hide_transparency = { Transparency = 0 }
 local menu_references = {}
 
 local out = Enum["EasingDirection"]["Out"]
 
 local connections = {}
-local addon_data = {}
-local heartbeat = {}
+addon_data = {}
+heartbeat = {}
 local flags = {
 	["keybinds_position"] = { 15, camera["ViewportSize"]["Y"] / 2 - 10 },
 	["loaded_addons"] = {},
@@ -80,7 +80,7 @@ local flags = {
 
 -- > ( global cheat functions )
 
-local create_connection = LPH_NO_VIRTUALIZE(function(signal, callback)
+create_connection = LPH_NO_VIRTUALIZE(function(signal, callback)
 	local connection = signal:Connect(callback)
 	connections[#connections + 1] = connection
 
@@ -88,7 +88,7 @@ local create_connection = LPH_NO_VIRTUALIZE(function(signal, callback)
 end)
 
 -- works even when the roblox menu is open or a game gui (inventory etc) is on top of the menu
-local create_move_connection = LPH_NO_VIRTUALIZE(function(callback)
+create_move_connection = LPH_NO_VIRTUALIZE(function(callback)
 	return create_connection(
 		user_input_service["InputChanged"],
 		LPH_NO_VIRTUALIZE(function(input)
@@ -101,7 +101,7 @@ local create_move_connection = LPH_NO_VIRTUALIZE(function(callback)
 	)
 end)
 
-local create_instance = LPH_NO_VIRTUALIZE(function(class, properties)
+create_instance = LPH_NO_VIRTUALIZE(function(class, properties)
 	local instance = Instance["new"](class)
 
 	for property, value in properties do
@@ -111,7 +111,7 @@ local create_instance = LPH_NO_VIRTUALIZE(function(class, properties)
 	return instance
 end)
 
-local round = LPH_NO_VIRTUALIZE(function(num, decimals)
+round = LPH_NO_VIRTUALIZE(function(num, decimals)
 	local mult = 10 ^ (decimals or 0)
 	return floor(num * mult + 0.5 - (num < 0 and 1 or 0)) / mult
 end)
@@ -182,7 +182,7 @@ end
 
 -- > ( tween library )
 
-local active_tweens = {
+active_tweens = {
 	Color = {},
 	Color3 = {},
 	Size = {},
@@ -431,14 +431,14 @@ do
 
 	-- > ( global menu variables )
 
-	local context_action_service = cloneref(game:GetService("ContextActionService"))
-	local high_priority = Enum["ContextActionPriority"]["High"]["Value"] + 100
-	local context_action_click = tostring({}):sub(math_random(8, 12))
-	local context_action_scroll = tostring({}):sub(math_random(8, 12))
-	local context_action_typing = tostring({}):sub(math_random(8, 12))
-	local context_action_typing_core = tostring({}):sub(math_random(8, 12))
+	context_action_service = cloneref(game:GetService("ContextActionService"))
+	high_priority = Enum["ContextActionPriority"]["High"]["Value"] + 100
+	context_action_click = tostring({}):sub(math_random(8, 12))
+	context_action_scroll = tostring({}):sub(math_random(8, 12))
+	context_action_typing = tostring({}):sub(math_random(8, 12))
+	context_action_typing_core = tostring({}):sub(math_random(8, 12))
 
-	local shortened_characters = {
+	shortened_characters = {
 		[Enum.KeyCode.LeftShift] = "lshift",
 		[Enum.KeyCode.RightShift] = "rshift",
 		[Enum.UserInputType.MouseButton1] = "m1",
@@ -474,60 +474,60 @@ do
 		[Enum.KeyCode.BackSlash] = "bsls",
 	}
 
-	local on_keybind_created = signal["new"]()
-	local on_keybind_deleted = signal["new"]()
-	local on_keybind_updated = signal["new"]()
-	local on_keybind_change = signal["new"]()
-	local transparency_image_data = base64_decode(
+	on_keybind_created = signal["new"]()
+	on_keybind_deleted = signal["new"]()
+	on_keybind_updated = signal["new"]()
+	on_keybind_change = signal["new"]()
+	transparency_image_data = base64_decode(
 		"iVBORw0KGgoAAAANSUhEUgAAABkAAAAMBAMAAABl3At4AAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAGUExURf///8rKyoNe1IIAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAAYdEVYdFNvZnR3YXJlAFBhaW50Lk5FVCA1LjEuMvu8A7YAAAC2ZVhJZklJKgAIAAAABQAaAQUAAQAAAEoAAAAbAQUAAQAAAFIAAAAoAQMAAQAAAAIAAAAxAQIAEAAAAFoAAABphwQAAQAAAGoAAAAAAAAAYAAAAAEAAABgAAAAAQAAAFBhaW50Lk5FVCA1LjEuMgADAACQBwAEAAAAMDIzMAGgAwABAAAAAQAAAAWgBAABAAAAlAAAAAAAAAACAAEAAgAEAAAAUjk4AAIABwAEAAAAMDEwMAAAAADp1fY4ytpsegAAABdJREFUGNNjYBBEgmg8ZI4AGo+u+hgEAKy7BSkQOa/KAAAAAElFTkSuQmCC"
 	)
-	local checkmark_image_data = base64_decode(
+	checkmark_image_data = base64_decode(
 		"iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAYAAADED76LAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAAYdEVYdFNvZnR3YXJlAFBhaW50Lk5FVCA1LjEuMvu8A7YAAAC2ZVhJZklJKgAIAAAABQAaAQUAAQAAAEoAAAAbAQUAAQAAAFIAAAAoAQMAAQAAAAIAAAAxAQIAEAAAAFoAAABphwQAAQAAAGoAAAAAAAAAYAAAAAEAAABgAAAAAQAAAFBhaW50Lk5FVCA1LjEuMgADAACQBwAEAAAAMDIzMAGgAwABAAAAAQAAAAWgBAABAAAAlAAAAAAAAAACAAEAAgAEAAAAUjk4AAIABwAEAAAAMDEwMAAAAADp1fY4ytpsegAAAEFJREFUKFOFj0EOACEIxMD//3ncTsSDYbUXDFMhpKS4MVbt4Kf+BI/Nj07YIesRPIpm1QoBIf1qQqgVls4QHmdGTFexGgt5dAJMAAAAAElFTkSuQmCC"
 	)
-	local config_image_data = base64_decode(
+	config_image_data = base64_decode(
 		"iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAYAAACNMs+9AAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAAYdEVYdFNvZnR3YXJlAFBhaW50Lk5FVCA1LjEuMvu8A7YAAAC2ZVhJZklJKgAIAAAABQAaAQUAAQAAAEoAAAAbAQUAAQAAAFIAAAAoAQMAAQAAAAIAAAAxAQIAEAAAAFoAAABphwQAAQAAAGoAAAAAAAAAYAAAAAEAAABgAAAAAQAAAFBhaW50Lk5FVCA1LjEuMgADAACQBwAEAAAAMDIzMAGgAwABAAAAAQAAAAWgBAABAAAAlAAAAAAAAAACAAEAAgAEAAAAUjk4AAIABwAEAAAAMDEwMAAAAADp1fY4ytpsegAAAFFJREFUKFOdz8ERwCAIBEC0x6QmuzYcORlkhofuB0VEbKKmQoya4tJ0xuzNl6tC64hiNZj6n04eHvlY5YyRz4tCsE3A9FnH7TNILEy5u441kQ8rkEMeEE8J7QAAAABJRU5ErkJggg=="
 	)
-	local button_image_data = base64_decode(
+	button_image_data = base64_decode(
 		"iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAMAAAC67D+PAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAGUExURf///wAAAFXC034AAAACdFJOU/8A5bcwSgAAAAlwSFlzAAAOxAAADsQBlSsOGwAAABh0RVh0U29mdHdhcmUAUGFpbnQuTkVUIDUuMS4y+7wDtgAAALZlWElmSUkqAAgAAAAFABoBBQABAAAASgAAABsBBQABAAAAUgAAACgBAwABAAAAAgAAADEBAgAQAAAAWgAAAGmHBAABAAAAagAAAAAAAAAMdwEA6AMAAAx3AQDoAwAAUGFpbnQuTkVUIDUuMS4yAAMAAJAHAAQAAAAwMjMwAaADAAEAAAABAAAABaAEAAEAAACUAAAAAAAAAAIAAQACAAQAAABSOTgAAgAHAAQAAAAwMTAwAAAAAO7qLRjGzAACAAAAK0lEQVQYVz3KQRIAAAQCwPr/p5WiQ9YAfkDcZiph7HnUucyD3V/RWqbaCjkOewBGmBH+OgAAAABJRU5ErkJggg=="
 	)
-	local arrow_image_data = base64_decode(
+	arrow_image_data = base64_decode(
 		"iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAYAAADED76LAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsIAAA7CARUoSoAAAAAYdEVYdFNvZnR3YXJlAFBhaW50Lk5FVCA1LjEuMvu8A7YAAAC2ZVhJZklJKgAIAAAABQAaAQUAAQAAAEoAAAAbAQUAAQAAAFIAAAAoAQMAAQAAAAIAAAAxAQIAEAAAAFoAAABphwQAAQAAAGoAAAAAAAAA8nYBAOgDAADydgEA6AMAAFBhaW50Lk5FVCA1LjEuMgADAACQBwAEAAAAMDIzMAGgAwABAAAAAQAAAAWgBAABAAAAlAAAAAAAAAACAAEAAgAEAAAAUjk4AAIABwAEAAAAMDEwMAAAAACOO8FX0xe8TgAAABdJREFUKFNj/A8EDHgAE5QmHwwBKxgYAJzaC/5K6BlzAAAAAElFTkSuQmCC"
 	)
-	local cog_image_data = base64_decode(
+	cog_image_data = base64_decode(
 		"iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAMAAAC67D+PAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAGUExURf///wAAAFXC034AAAACdFJOU/8A5bcwSgAAAAlwSFlzAAAQKAAAECgBJz8A6wAAABh0RVh0U29mdHdhcmUAUGFpbnQuTkVUIDUuMS4y+7wDtgAAALZlWElmSUkqAAgAAAAFABoBBQABAAAASgAAABsBBQABAAAAUgAAACgBAwABAAAAAgAAADEBAgAQAAAAWgAAAGmHBAABAAAAagAAAAAAAAB3mgEA6AMAAHeaAQDoAwAAUGFpbnQuTkVUIDUuMS4yAAMAAJAHAAQAAAAwMjMwAaADAAEAAAABAAAABaAEAAEAAACUAAAAAAAAAAIAAQACAAQAAABSOTgAAgAHAAQAAAAwMTAwAAAAAEyPNqYn0aVIAAAALElEQVQYV2NgBAIGCAmioQhIQACQCZaGYBAJoZGYSApgUhATYAiikJGRkREACr4AMZ+SUSoAAAAASUVORK5CYII="
 	)
 	-- > ( mobile )
 
 	-- same detection linora uses: touch without mouse, or an android / ios platform
-	local is_mobile = (user_input_service["TouchEnabled"] and not user_input_service["MouseEnabled"])
+	is_mobile = (user_input_service["TouchEnabled"] and not user_input_service["MouseEnabled"])
 		or game:GetService("UserInputService"):GetPlatform() == Enum["Platform"]["Android"]
 		or game:GetService("UserInputService"):GetPlatform() == Enum["Platform"]["IOS"]
 
 	-- the whole menu renders scaled down on phones so it fits the screen.
 	-- set getgenv().ui_scale on pc to preview the mobile layout
-	local mobile_viewport = camera["ViewportSize"]
-	local menu_scale = getgenv().ui_scale
+	mobile_viewport = camera["ViewportSize"]
+	menu_scale = getgenv().ui_scale
 		or (
 			is_mobile
 				and clamp(math.min(mobile_viewport["X"] / 700, mobile_viewport["Y"] / 520), 0.55, 0.85)
 			or 1
 		)
 
-	local menu_position = udim2_new(
+	menu_position = udim2_new(
 		0,
 		(mobile_viewport["X"] - 575 * menu_scale) / 2 / menu_scale,
 		0,
 		(mobile_viewport["Y"] - 450 * menu_scale) / 2 / menu_scale
 	)
 
-	local half_transparency = { Transparency = 0.5 }
-	local stop_panel_search = nil
+	half_transparency = { Transparency = 0.5 }
+	stop_panel_search = nil
 	local do_notifications = true
 	local set_active_tab = nil
-	local theme_section = nil
-	local close_context = nil
-	local close_settings = nil
-	local menu_open = true
+	theme_section = nil
+	close_context = nil
+	close_settings = nil
+	menu_open = true
 	local menu_locked = false
 	local menu_tick = clock()
 	local pop_menu = nil
