@@ -1,9 +1,5 @@
---[[
-    Oxy UI - library
-    Load this file, then build your menu with the returned Library table.
-    See "UI Example.lua" for a full menu, or "UI Testing.lua" to run both.
-]]
 
+--> yo
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
