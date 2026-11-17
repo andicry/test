@@ -1,5 +1,5 @@
 
---> yo
+
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
@@ -10,7 +10,7 @@ local Lighting = game:GetService("Lighting")
 local GuiService = game:GetService("GuiService")
 
 local player = Players.LocalPlayer
-assert(player, "Oxy requires a client environment")
+
 
 local Library = {
     Flags = {},
@@ -2080,41 +2080,74 @@ function Library:CreateWindow(spec)
         UDim2.fromOffset(0, 22)
     )
 
-    local watermarkText = text(watermark.Frame, "", {
-        Position = UDim2.fromOffset(7, 0),
-        Size = UDim2.new(1, -14, 1, 0),
-        TextSize = 10,
+    -- The watermark hugs its content: the brand mark and the text are laid out
+    -- by a list and the frame grows with them, so no width has to be measured
+    -- (the loaded font face does not match the fallback metrics TextService
+    -- uses) and no empty space is left behind.
+    watermark.Frame.AutomaticSize = Enum.AutomaticSize.X
+
+    local watermarkContent = frame(watermark.Frame, {
+        Name = "Content",
+        Size = UDim2.fromOffset(0, 22),
+        AutomaticSize = Enum.AutomaticSize.X,
+        BackgroundTransparency = 1,
         ZIndex = 72,
     })
 
-    -- The watermark hugs its text exactly: width and position follow the
-    -- measured text bounds, so there is no leftover empty space. Auto
-    -- positioning stops as soon as the user drags it elsewhere (the drag
-    -- leaves the frame anchored to scale 0).
-    local function sizeWatermark()
-        local ok, bounds = pcall(
-            TextService.GetTextSize,
-            TextService,
-            watermarkText.Text,
-            10,
-            Library.Font,
-            Vector2.new(8192, 8192)
-        )
+    make("UIPadding", {
+        PaddingLeft = UDim.new(0, 7),
+        PaddingRight = UDim.new(0, 7),
+    }, watermarkContent)
 
-        local textWidth = ok and bounds and bounds.X or 0
-        local width = math.max(math.floor(textWidth) + 14, 24)
+    make("UIListLayout", {
+        FillDirection = Enum.FillDirection.Horizontal,
+        SortOrder = Enum.SortOrder.LayoutOrder,
+        VerticalAlignment = Enum.VerticalAlignment.Center,
+        Padding = UDim.new(0, 5),
+    }, watermarkContent)
 
-        watermark.Frame.Size = UDim2.fromOffset(width, 22)
+    local watermarkLogo = icon(
+        watermarkContent,
+        "moon",
+        UDim2.fromOffset(0, 0),
+        10,
+        self.Theme.Accent,
+        72
+    )
 
+    watermarkLogo.LayoutOrder = 1
+    watermarkLogo.Visible = watermarkLogo.Image ~= ""
+
+    observeAccent(watermarkLogo, function(color)
+        watermarkLogo.ImageColor3 = color
+    end)
+
+    connect(watermarkLogo:GetPropertyChangedSignal("Image"), function()
+        watermarkLogo.Visible = watermarkLogo.Image ~= ""
+    end)
+
+    local watermarkText = text(watermarkContent, "", {
+        Size = UDim2.fromOffset(0, 22),
+        AutomaticSize = Enum.AutomaticSize.X,
+        TextSize = 10,
+        TextWrapped = false,
+        TextTruncate = Enum.TextTruncate.None,
+        LayoutOrder = 2,
+        ZIndex = 72,
+    })
+
+    -- only the right-anchored position has to follow the frame; a dragged
+    -- watermark keeps the spot the user put it in
+    connect(watermark.Frame:GetPropertyChangedSignal("AbsoluteSize"), function()
         if watermark.Frame.Position.X.Scale == 1 then
             watermark.Frame.Position = UDim2.new(
                 1,
-                -math.floor(width + 8),
+                -math.floor(watermark.Frame.AbsoluteSize.X + 8),
                 0,
                 watermark.Frame.Position.Y.Offset
             )
         end
-    end
+    end)
 
     local watermarkItems = { "Title", "Time" }
     local watermarkOrder = { "Title", "User", "FPS", "Ms", "Date", "Time" }
@@ -2170,7 +2203,6 @@ function Library:CreateWindow(spec)
         end
 
         watermarkText.Text = table.concat(segments, "  |  ")
-        sizeWatermark()
     end
 
     local function normalizeWatermarkItems(value)
@@ -2214,6 +2246,17 @@ function Library:CreateWindow(spec)
     function watermark.SetWatermarkItems(value)
         watermarkItems = normalizeWatermarkItems(value)
         updateWatermarkText()
+    end
+
+    -- the watermark starts with the library brand mark; pass an image
+    -- (rbxassetid:// or any url) to swap it, or nil to go back to the mark
+    function watermark.SetLogo(image)
+        if type(image) == "string" and image ~= "" then
+            watermarkLogo.Image = image
+            return
+        end
+
+        paintIcon(watermarkLogo, "moon")
     end
 
     updateWatermarkText()
@@ -2797,34 +2840,18 @@ function Library:Notify(spec)
 
     local content = tostring(spec.Content or "")
 
-    -- measure the text unwrapped first: notifications are allowed to grow as
-    -- wide as the message needs instead of clipping it with an ellipsis, only
-    -- the screen edge limits them
+    -- a toast may grow as wide as the message needs, only the screen edge
+    -- limits it. TextService measures the fallback font, while the glyphs are
+    -- drawn with the loaded font face, so the rendered TextBounds are the only
+    -- accurate source: the box starts collapsed and hugs them a frame later
     local maxWidth = tonumber(spec.MaxWidth)
         or math.max(240, viewport().X - 40)
-    local single = TextService:GetTextSize(
-        content,
-        10,
-        Library.Font,
-        Vector2.new(10000, 100)
-    )
-
-    local textWidth = math.ceil(single.X * Library.FontScaleX) + 2
-    local noteWidth = math.min(maxWidth, textWidth) + 18
-    local wrapped = textWidth > maxWidth
-
-    local bounds = TextService:GetTextSize(
-        content,
-        10,
-        Library.Font,
-        Vector2.new(noteWidth - 18, 1000)
-    )
-
-    local noteHeight = math.floor(bounds.Y * Library.FontScaleY) + 8
+    local paddingX = 16 -- 9px left of the text, 7px right of it
+    local available = maxWidth - paddingX
 
     local note = frame(holder, {
         Name = "Notification",
-        Size = UDim2.fromOffset(noteWidth, 0),
+        Size = UDim2.fromOffset(math.min(available, 240), 0),
         BackgroundColor3 = Color3.fromRGB(24, 22, 25),
         ClipsDescendants = true,
         ZIndex = 151,
@@ -2848,10 +2875,10 @@ function Library:Notify(spec)
         152
     )
 
-    text(note, content, {
+    local label = text(note, content, {
         Position = UDim2.fromOffset(9, 4),
-        Size = UDim2.new(1, -16, 1, -8),
-        TextWrapped = wrapped,
+        Size = UDim2.new(1, -paddingX, 1, -8),
+        TextWrapped = false,
         TextTruncate = Enum.TextTruncate.None,
         TextSize = 10,
         ZIndex = 153,
@@ -2863,10 +2890,41 @@ function Library:Notify(spec)
     })
 
     local closed = false
+    local noteWidth = math.min(available, 240)
 
-    animate(note, 0.16, {
-        Size = UDim2.fromOffset(noteWidth, noteHeight),
-    })
+    local function fit()
+        if closed or not note.Parent then
+            return
+        end
+
+        local bounds = label.TextBounds
+
+        if bounds.X <= 0 then
+            return
+        end
+
+        local textWidth = math.ceil(bounds.X)
+
+        if textWidth > available then
+            -- wider than the screen allows: wrap instead of clipping
+            if not label.TextWrapped then
+                label.TextWrapped = true
+                note.Size = UDim2.fromOffset(maxWidth, 0)
+                return
+            end
+
+            noteWidth = maxWidth
+        else
+            noteWidth = textWidth + paddingX
+        end
+
+        animate(note, 0.16, {
+            Size = UDim2.fromOffset(
+                noteWidth,
+                math.max(10, math.ceil(bounds.Y)) + 8
+            ),
+        })
+    end
 
     local function close()
         if closed then
@@ -2895,6 +2953,12 @@ function Library:Notify(spec)
             close()
         end
     end)
+
+    -- TextBounds settles once the font face has loaded: fitting on every
+    -- change keeps the toast exactly as wide as the message even when the
+    -- first frame was still measured with the fallback glyphs
+    connect(label:GetPropertyChangedSignal("TextBounds"), fit)
+    task.defer(fit)
 end
 
 local function escapeRichText(value)
