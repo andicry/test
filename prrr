@@ -10,7 +10,7 @@ local Lighting = game:GetService("Lighting")
 local GuiService = game:GetService("GuiService")
 
 local player = Players.LocalPlayer
-
+assert(player, "Oxy requires a client environment")
 
 local Library = {
     Flags = {},
@@ -1095,22 +1095,30 @@ local function inset(parent, position, size, z)
     return well
 end
 
+-- tooltip geometry: the frame grows with the wrapped text (AutomaticSize)
+-- instead of being measured by hand, so a long message is never clipped or
+-- ended with "..."
+local TOOLTIP_TEXT_SIZE = 10
+local TOOLTIP_PADDING = 8
+local TOOLTIP_MIN_WIDTH = 72
+local TOOLTIP_MAX_WIDTH = 260
+
 local function addTooltip(parent, message)
     if type(message) ~= "string" or message == "" then
         return nil
     end
 
     local area = hit(parent, {
-        Position = UDim2.new(1, -16, 0.5, -7),
-        Size = UDim2.fromOffset(14, 14),
+        Position = UDim2.new(1, -18, 0.5, -8),
+        Size = UDim2.fromOffset(16, 16),
         ZIndex = 40,
     })
 
     text(area, "(?)", {
         Size = UDim2.fromScale(1, 1),
         TextXAlignment = Enum.TextXAlignment.Center,
-        TextColor3 = Library.Theme.TextInactive,
-        TextSize = 9,
+        TextColor3 = Library.Theme.Text,
+        TextSize = 10,
         ZIndex = 41,
     })
 
@@ -1122,16 +1130,29 @@ local function addTooltip(parent, message)
         tooltipTarget = area
         window.TooltipText.Text = message
 
+        -- measure with the same width the label wraps at, then let the height
+        -- come from AutomaticSize: the old fixed-height estimate cut wrapped
+        -- messages short whenever the loaded font was taller than the fallback
+        local view = viewport()
+        local maxWidth = math.min(
+            TOOLTIP_MAX_WIDTH,
+            math.max(TOOLTIP_MIN_WIDTH, view.X - 24)
+        )
+
         local bounds = TextService:GetTextSize(
             message,
-            10,
+            TOOLTIP_TEXT_SIZE,
             Library.Font,
-            Vector2.new(180, 1000)
+            Vector2.new(maxWidth - TOOLTIP_PADDING * 2, 1000)
         )
 
         window.Tooltip.Size = UDim2.fromOffset(
-            math.clamp(bounds.X * Library.FontScaleX + 14, 55, 194),
-            bounds.Y + 10
+            math.clamp(
+                bounds.X * Library.FontScaleX + TOOLTIP_PADDING * 2,
+                TOOLTIP_MIN_WIDTH,
+                maxWidth
+            ),
+            0
         )
 
         window.Tooltip.Visible = true
@@ -1608,26 +1629,50 @@ local function readPolSecGlobal(name)
     return value
 end
 
-local function sessionLabel()
+-- PolSec reports the remaining lifetime in whole seconds (0 = lifetime), so
+-- break it into days/hours/minutes/seconds for the footer.
+local function formatTimeLeft(seconds)
+    seconds = tonumber(seconds)
+
+    if seconds == nil then
+        return nil
+    end
+
+    seconds = math.floor(seconds)
+
+    if seconds == 0 then
+        return "lifetime"
+    end
+
+    if seconds < 0 then
+        return "expired"
+    end
+
+    local days = math.floor(seconds / 86400)
+    local hours = math.floor(seconds % 86400 / 3600)
+    local minutes = math.floor(seconds % 3600 / 60)
+    local secs = seconds % 60
+
+    return string.format(
+        "%dd %02dh %02dm %02ds",
+        days,
+        hours,
+        minutes,
+        secs
+    )
+end
+
+-- Returns the remaining lifetime as days/hours/minutes/seconds, or nil when
+-- the ui is not being run from a PolSec loader. The key itself is never shown:
+-- the footer only reports how long the license has left.
+local function sessionTimeLeft()
     local key = readPolSecGlobal("script_key")
 
     if type(key) ~= "string" or key == "" then
         return nil
     end
 
-    local timeLeft = readPolSecGlobal("PolSec_Time_Left")
-
-    if timeLeft == nil or timeLeft == "" then
-        timeLeft = "lifetime"
-    end
-
-    timeLeft = tostring(timeLeft)
-    timeLeft = timeLeft:gsub("%s+", " ")
-
-    -- keep the footer readable: 8 characters are plenty to recognise a key
-    local shortKey = #key > 10 and (key:sub(1, 8) .. "..") or key
-
-    return timeLeft .. " | " .. shortKey
+    return formatTimeLeft(readPolSecGlobal("PolSec_Time_Left")) or "lifetime"
 end
 
 function Library:CreateWindow(spec)
@@ -1818,8 +1863,8 @@ function Library:CreateWindow(spec)
     local brandMark = icon(
         brand,
         "moon",
-        UDim2.fromOffset(11, 14),
-        12,
+        UDim2.fromOffset(10, 11),
+        20,
         self.Theme.Accent,
         16
     )
@@ -1830,12 +1875,18 @@ function Library:CreateWindow(spec)
 
     local brandFallback = frame(brand, {
         Name = "BrandMark",
-        Position = UDim2.fromOffset(13, 15),
-        Size = UDim2.fromOffset(10, 10),
+        Position = UDim2.fromOffset(12, 13),
+        Size = UDim2.fromOffset(16, 16),
         BackgroundColor3 = self.Theme.Accent,
         Visible = brandMark.Image == "",
         ZIndex = 15,
     })
+
+    -- the icon module is loaded before the window, but keep the placeholder in
+    -- sync anyway so it never sits on top of a late icon
+    connect(brandMark:GetPropertyChangedSignal("Image"), function()
+        brandFallback.Visible = brandMark.Image == ""
+    end)
 
     bindTheme(brandFallback, "BackgroundColor3", "Accent")
 
@@ -1846,16 +1897,16 @@ function Library:CreateWindow(spec)
     )
 
     local title = text(brand, spec.Title or "Oxy", {
-        Position = UDim2.fromOffset(35, 6),
-        Size = UDim2.new(1, -42, 0, 16),
+        Position = UDim2.fromOffset(37, 6),
+        Size = UDim2.new(1, -44, 0, 16),
         Font = Enum.Font.GothamBold,
         TextSize = 10,
         ZIndex = 16,
     })
 
     local subtitle = text(brand, spec.Subtitle or "s67", {
-        Position = UDim2.fromOffset(35, 21),
-        Size = UDim2.new(1, -42, 0, 13),
+        Position = UDim2.fromOffset(37, 21),
+        Size = UDim2.new(1, -44, 0, 13),
         TextSize = 9,
         TextColor3 = self.Theme.TextInactive,
         ZIndex = 16,
@@ -1934,14 +1985,14 @@ function Library:CreateWindow(spec)
         end
     end)
 
-    text(footer, spec.User or "OxyUser", {
-        Position = UDim2.fromOffset(46, 8),
+    text(footer, spec.User or "User", {
+        Position = UDim2.fromOffset(46, 6),
         Size = UDim2.new(1, -51, 0, 13),
         TextSize = 10,
         ZIndex = 16,
     })
 
-    local uidLabel = text(footer, spec.UID or "UID 2", {
+    local uidLabel = text(footer, spec.UID or "UID 1", {
         Position = UDim2.fromOffset(46, 21),
         Size = UDim2.new(1, -51, 0, 12),
         TextColor3 = self.Theme.TextInactive,
@@ -1949,22 +2000,45 @@ function Library:CreateWindow(spec)
         ZIndex = 16,
     })
 
-    -- loaded through a PolSec loader: show the real session instead of the
-    -- placeholder (time left + the key the user redeemed)
-    if not spec.UID or spec.UID == "UID 2" then
-        local function refreshSession()
-            local label = sessionLabel()
+    -- loaded through a PolSec loader: show the live countdown
+    -- (days / hours / minutes / seconds) instead of the UID placeholder
+    if not spec.UID or spec.UID == "UID 1" or spec.UID == "UID 2" then
+        local defaultUID = spec.UID or "UID 1"
 
-            if label and uidLabel.Parent then
-                uidLabel.Text = label
+        make("UITextSizeConstraint", {
+            MinTextSize = 7,
+            MaxTextSize = 9,
+        }, uidLabel)
+
+        local function refreshSession()
+            if not uidLabel.Parent then
+                return
             end
+
+            local timeLeft = sessionTimeLeft()
+
+            if not timeLeft then
+                uidLabel.Text = defaultUID
+                uidLabel.TextScaled = false
+                uidLabel.TextSize = 9
+                uidLabel.TextTruncate = Enum.TextTruncate.AtEnd
+                return
+            end
+
+            -- one clean line: the clock never pushes the row around, and
+            -- TextScaled keeps a long duration from ending in "..."
+            uidLabel.Text = timeLeft
+            uidLabel.TextTruncate = Enum.TextTruncate.None
+            uidLabel.TextScaled = true
         end
 
         refreshSession()
 
         task.spawn(function()
             while alive do
-                task.wait(30)
+                -- PolSec_Time_Left counts down locally, so a one second tick
+                -- gives a live clock without polling the network
+                task.wait(1)
 
                 if not alive then
                     break
@@ -2031,7 +2105,8 @@ function Library:CreateWindow(spec)
 
     local tooltip = frame(gui, {
         Name = "Tooltip",
-        Size = UDim2.fromOffset(120, 24),
+        Size = UDim2.fromOffset(120, 0),
+        AutomaticSize = Enum.AutomaticSize.Y,
         BackgroundColor3 = Color3.fromRGB(26, 24, 27),
         Visible = false,
         ZIndex = 200,
@@ -2043,11 +2118,20 @@ function Library:CreateWindow(spec)
         Color3.fromRGB(190, 190, 190)
     )
 
+    make("UIPadding", {
+        PaddingLeft = UDim.new(0, TOOLTIP_PADDING),
+        PaddingRight = UDim.new(0, TOOLTIP_PADDING),
+        PaddingTop = UDim.new(0, 5),
+        PaddingBottom = UDim.new(0, 5),
+    }, tooltip)
+
     local tooltipText = text(tooltip, "", {
-        Position = UDim2.fromOffset(7, 4),
-        Size = UDim2.new(1, -14, 1, -8),
+        Size = UDim2.new(1, 0, 0, 0),
+        AutomaticSize = Enum.AutomaticSize.Y,
         TextWrapped = true,
-        TextSize = 10,
+        TextTruncate = Enum.TextTruncate.None,
+        TextYAlignment = Enum.TextYAlignment.Top,
+        TextSize = TOOLTIP_TEXT_SIZE,
         ZIndex = 201,
     })
 
@@ -2375,7 +2459,7 @@ function Library:CreateWindow(spec)
         Keybinds = keybinds,
         KeybindList = keybindList,
         Title = tostring(spec.Title or "Oxy"),
-        User = tostring(spec.User or "OxyUser"),
+        User = tostring(spec.User or "User"),
         Tabs = {},
         ActiveTab = nil,
         Visible = true,
@@ -6106,6 +6190,7 @@ local ESP_CONFIG_DEFAULTS = {
     FlagMoney = false,
     FlagScoped = false,
     FlagArmor = false,
+    FlagKO = false,
     FlagPadding = 3,
 }
 
@@ -6863,6 +6948,43 @@ local function espPlayerFlags(ESP, character, humanoid, config)
         table.insert(flags, "idle")
     end
 
+    -- knocked and dead read the body effects first, then the character
+    -- attributes, so a reset or a stomp reports dead instead of knocked
+    if config.FlagKO then
+        local effects = character:FindFirstChild("BodyEffects")
+        local dead = false
+        local knocked = false
+
+        if effects then
+            local deadValue = effects:FindFirstChild("Dead")
+            dead = deadValue
+                and deadValue:IsA("BoolValue")
+                and deadValue.Value
+                or false
+
+            local knockValue = effects:FindFirstChild("K.O")
+            knocked = knockValue
+                and knockValue:IsA("BoolValue")
+                and knockValue.Value
+                or false
+        end
+
+        if not dead then
+            dead = character:GetAttribute("Dead") == true
+                or (humanoid ~= nil and humanoid.Health <= 0)
+        end
+
+        if not knocked then
+            knocked = character:GetAttribute("Knocked") == true
+        end
+
+        if dead then
+            table.insert(flags, "dead")
+        elseif knocked then
+            table.insert(flags, "K.O")
+        end
+    end
+
     if config.FlagMoney then
         local money = espReadNumber(character, humanoid, "Cash")
             or espReadNumber(character, humanoid, "Money")
@@ -7471,6 +7593,10 @@ local function createESPPreview(section, spec)
 
         if config.FlagMoney then
             table.insert(flags, "$1.2k")
+        end
+
+        if config.FlagKO then
+            table.insert(flags, "K.O")
         end
 
         if config.FlagScoped then
